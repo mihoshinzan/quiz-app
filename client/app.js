@@ -42,7 +42,7 @@ let currentRoom = null;
 let isMaster = false;
 
 /* =====================================================
-   状態（enum）
+   司会者ボタン状態
 ===================================================== */
 const MasterButtonState = {
   init:        { next:true,  wrong:false, resume:false, timeout:false, correct:false, clear:false, end:false },
@@ -92,7 +92,9 @@ function enter() {
 /* =====================================================
    操作
 ===================================================== */
-function buzz() { socket.emit("buzz", { roomId: currentRoom }); }
+function buzz() {
+  socket.emit("buzz", { roomId: currentRoom });
+}
 
 function nextQ() {
   questionArea.textContent = "";
@@ -148,7 +150,7 @@ socket.on("role", data => {
   isMaster = data.isMaster;
   if (isMaster) {
     buzzBtn.style.display = "none";
-    masterControls.style.display = "block";
+    masterControls.style.display = "flex";
     setState("init");
   } else {
     buzzBtn.style.display = "inline";
@@ -191,10 +193,21 @@ socket.on("enable_buzz", flag => {
   buzzBtn.disabled = !flag;
 });
 
-socket.on("enable_end", () => {
-  btnEnd.disabled = false;
+/* ===== 再接続時の復元 ===== */
+socket.on("restore_question", data => {
+  questionArea.textContent = data.text || "";
+  answerArea.textContent = data.answer ? `正解：${data.answer}` : "";
+
+  if (data.buzzed_name) {
+    buzzedArea.innerHTML = `💡 <strong>${data.buzzed_name}</strong>さんが回答者です！`;
+  } else {
+    buzzedArea.innerHTML = "&nbsp;";
+  }
+
+  buzzBtn.disabled = !data.enable_buzz;
 });
 
+/* ===== 得点 ===== */
 socket.on("players", ps => {
   players.innerHTML = "";
   Object.values(ps).forEach(p => {
@@ -202,6 +215,7 @@ socket.on("players", ps => {
   });
 });
 
+/* ===== 結果 ===== */
 socket.on("final", result => {
   players.innerHTML = "";
   const max = Math.max(...result.map(p => p.score));
@@ -212,24 +226,24 @@ socket.on("final", result => {
   setState("finished");
 });
 
-/* ===== エラーメッセージ ===== */
+socket.on("enable_end", () => {
+  btnEnd.disabled = false;
+});
+
+/* ===== エラー ===== */
 socket.on("error_msg", msg => {
   alert(msg);
   currentRoom = null;
 });
 
-/* =====================================================
-   ★ ルーム解散（参加者側も確実にアラート表示）
-===================================================== */
+/* ===== ルーム解散 ===== */
 socket.on("room_closed", () => {
   const message = isMaster
     ? "ルームを解散しました"
     : "司会者がルームを解散しました";
 
-  // alert を確実に表示
   alert(message);
 
-  // alert 完了後に遅延リロード
   setTimeout(() => {
     location.reload();
   }, 200);

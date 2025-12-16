@@ -1,26 +1,42 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 import socketio, csv, asyncio
+from pathlib import Path
 
-# =====================================================
-# Socket.IO + FastAPI 正しい ASGI 構成
-# =====================================================
-sio = socketio.AsyncServer(
-    async_mode="asgi",
-    cors_allowed_origins="*"
-)
+# ===============================
+# パス設定
+# ===============================
+BASE_DIR = Path(__file__).resolve().parent.parent
+CLIENT_DIR = BASE_DIR / "client"
+QUESTIONS_FILE = BASE_DIR / "server" / "questions.csv"
 
-fastapi_app = FastAPI()
+# ===============================
+# FastAPI / Socket.IO
+# ===============================
+sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
+app = FastAPI()
 
-# ★ FastAPI を Socket.IO の下にぶら下げる
-app = socketio.ASGIApp(
-    sio,
-    other_asgi_app=fastapi_app
-)
+# Socket.IO は専用パスにマウント（★再帰防止）
+app.mount("/socket.io", socketio.ASGIApp(sio))
 
+# 静的ファイル配信（app.js など）
+app.mount("/static", StaticFiles(directory=CLIENT_DIR), name="static")
+
+# ===============================
+# ルート → index.html
+# ===============================
+@app.get("/")
+async def index():
+    return FileResponse(CLIENT_DIR / "index.html")
+
+# ===============================
+# データ
+# ===============================
 rooms = {}
 
 def load_questions():
-    with open("questions.csv", encoding="utf-8") as f:
+    with open(QUESTIONS_FILE, encoding="utf-8") as f:
         return list(csv.DictReader(f))
 
 # =====================================================
@@ -74,29 +90,12 @@ async def join_room(sid, data):
         r["players"][user_id] = {"name": name, "score": 0, "sid": sid}
 
     await sio.enter_room(sid, room)
-
     await sio.emit("joined", to=sid)
     await sio.emit("role", {"isMaster": user_id == r["master_user_id"]}, to=sid)
     await sio.emit("players", r["players"], room=room)
 
     if r["current"] >= 0:
         await sio.emit("counter", {"cur": r["current"] + 1}, to=sid)
-
-    q = r["quiz"]
-    if q:
-        await sio.emit(
-            "restore_question",
-            {
-                "text": q["text"][:q["index"]],
-                "answer": q["answer"] if not q["active"] else None,
-                "buzzed_name": (
-                    r["players"][q["buzzed_sid"]]["name"]
-                    if q["buzzed_sid"] else None
-                ),
-                "enable_buzz": q["active"]
-            },
-            to=sid
-        )
 
 # =====================================================
 # 出題
@@ -127,7 +126,6 @@ async def next_question(sid, data):
 
     await sio.emit("counter", {"cur": r["current"] + 1}, room=room)
     await sio.emit("enable_buzz", True, room=room)
-
     sio.start_background_task(char_loop, room)
 
 async def char_loop(room):
@@ -204,7 +202,7 @@ async def timeout(sid, data):
         await sio.emit("clear_buzzed", room=room)
 
 # =====================================================
-# 正解（最終問題のみ結果ボタン有効）
+# 正解
 # =====================================================
 @sio.event
 async def judge(sid, data):
@@ -267,7 +265,7 @@ async def end_game(sid, data):
     await sio.emit("final", ranking, room=room)
 
 # =====================================================
-# ルーム解散（★ 確実通知版）
+# ルーム解散
 # =====================================================
 @sio.event
 async def close_room(sid, data):

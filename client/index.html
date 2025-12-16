@@ -7,6 +7,9 @@
   <!-- ★ スマホ対応必須 -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
+  <!-- ★ favicon（404対策） -->
+  <link rel="icon" href="data:,">
+
   <style>
     body {
       font-family: sans-serif;
@@ -87,7 +90,7 @@
 
 <!-- ===== 入室画面 ===== -->
 <div id="entry">
-  <!-- ★ 使用頻度が高い「参加」を先頭 & デフォルトに -->
+  <!-- ★ 使用頻度が高い「参加」を先頭 & デフォルト -->
   <label>
     <input type="radio" name="mode" value="join" checked>
     ルーム参加（回答者）
@@ -136,7 +139,6 @@
       <button onclick="correct()">正解</button>
       <button onclick="clearDisplay()">消去</button>
       <button onclick="end()">結果</button>
-      <!-- ★ 結果後のみ有効化される想定 -->
       <button onclick="closeRoom()">ルーム解散</button>
     </div>
   </div>
@@ -146,6 +148,7 @@
 </div>
 
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-<script src="app.js"></script>
+<script src="app.js" defer></script>
+
 </body>
 </html>
