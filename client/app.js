@@ -1,0 +1,236 @@
+const socket = io();
+
+/* =====================================================
+   userId（永続）
+===================================================== */
+let userId = localStorage.getItem("quiz_user_id");
+if (!userId) {
+  userId = crypto.randomUUID();
+  localStorage.setItem("quiz_user_id", userId);
+}
+
+/* =====================================================
+   DOM
+===================================================== */
+const entry = document.getElementById("entry");
+const game = document.getElementById("game");
+
+const nameInput = document.getElementById("name");
+const roomInput = document.getElementById("room");
+
+const questionArea = document.getElementById("questionArea");
+const answerArea = document.getElementById("answerArea");
+const buzzedArea = document.getElementById("buzzed");
+
+const counter = document.getElementById("counter");
+const players = document.getElementById("players");
+
+const buzzBtn = document.getElementById("buzzBtn");
+const masterControls = document.getElementById("masterControls");
+
+// 司会者ボタン
+const btnNext    = masterControls.querySelector('button[onclick="nextQ()"]');
+const btnWrong   = masterControls.querySelector('button[onclick="wrong()"]');
+const btnResume  = masterControls.querySelector('button[onclick="resume()"]');
+const btnTimeout = masterControls.querySelector('button[onclick="timeout()"]');
+const btnCorrect = masterControls.querySelector('button[onclick="correct()"]');
+const btnClear   = masterControls.querySelector('button[onclick="clearDisplay()"]');
+const btnEnd     = masterControls.querySelector('button[onclick="end()"]');
+const btnClose   = masterControls.querySelector('button[onclick="closeRoom()"]');
+
+let currentRoom = null;
+let isMaster = false;
+
+/* =====================================================
+   状態（enum）
+===================================================== */
+const MasterButtonState = {
+  init:        { next:true,  wrong:false, resume:false, timeout:false, correct:false, clear:false, end:false },
+  asking:      { next:false, wrong:false, resume:false, timeout:true,  correct:false, clear:false, end:false },
+  buzzed:      { next:false, wrong:true,  resume:false, timeout:false, correct:true,  clear:false, end:false },
+  wrong:       { next:false, wrong:false, resume:true,  timeout:false, correct:false, clear:false, end:false },
+  timeout:     { next:false, wrong:false, resume:false, timeout:false, correct:true,  clear:false, end:false },
+  show_answer: { next:false, wrong:false, resume:false, timeout:false, correct:false, clear:true,  end:false },
+  finished:    { next:false, wrong:false, resume:false, timeout:false, correct:false, clear:false, end:false },
+};
+
+function setState(state) {
+  const s = MasterButtonState[state];
+  if (!s) return;
+
+  btnNext.disabled    = !s.next;
+  btnWrong.disabled   = !s.wrong;
+  btnResume.disabled  = !s.resume;
+  btnTimeout.disabled = !s.timeout;
+  btnCorrect.disabled = !s.correct;
+  btnClear.disabled   = !s.clear;
+  btnEnd.disabled     = !s.end;
+
+  btnClose.disabled = false;
+}
+
+/* =====================================================
+   入室
+===================================================== */
+function enter() {
+  const name = nameInput.value.trim();
+  const room = roomInput.value.trim();
+  if (!name || !room) {
+    alert("名前とルームIDを入力してください");
+    return;
+  }
+
+  currentRoom = room;
+  const mode = document.querySelector('input[name="mode"]:checked').value;
+
+  socket.emit(
+    mode === "create" ? "create_room" : "join_room",
+    { roomId: room, name, userId }
+  );
+}
+
+/* =====================================================
+   操作
+===================================================== */
+function buzz() { socket.emit("buzz", { roomId: currentRoom }); }
+
+function nextQ() {
+  questionArea.textContent = "";
+  answerArea.textContent = "";
+  buzzedArea.innerHTML = "&nbsp;";
+  socket.emit("next_question", { roomId: currentRoom });
+  setState("asking");
+}
+
+function wrong() {
+  socket.emit("wrong", { roomId: currentRoom });
+  setState("wrong");
+}
+
+function resume() {
+  socket.emit("resume", { roomId: currentRoom });
+  setState("asking");
+}
+
+function timeout() {
+  socket.emit("timeout", { roomId: currentRoom });
+  setState("timeout");
+}
+
+function correct() {
+  socket.emit("judge", { roomId: currentRoom });
+  setState("show_answer");
+}
+
+function clearDisplay() {
+  socket.emit("clear_display", { roomId: currentRoom });
+  setState("init");
+}
+
+function end() {
+  socket.emit("end_game", { roomId: currentRoom });
+}
+
+function closeRoom() {
+  if (!confirm("ルームを解散しますか？")) return;
+  socket.emit("close_room", { roomId: currentRoom });
+}
+
+/* =====================================================
+   socket events
+===================================================== */
+socket.on("joined", () => {
+  entry.style.display = "none";
+  game.style.display = "block";
+});
+
+socket.on("role", data => {
+  isMaster = data.isMaster;
+  if (isMaster) {
+    buzzBtn.style.display = "none";
+    masterControls.style.display = "block";
+    setState("init");
+  } else {
+    buzzBtn.style.display = "inline";
+    masterControls.style.display = "none";
+    buzzBtn.disabled = true;
+  }
+});
+
+socket.on("char", c => {
+  questionArea.textContent += c;
+});
+
+socket.on("counter", c => {
+  counter.textContent = c.cur ? `第 ${c.cur} 問` : "";
+});
+
+socket.on("buzzed", data => {
+  buzzedArea.innerHTML = `💡 <strong>${data.name}</strong>さんが回答者です！`;
+  if (isMaster) setState("buzzed");
+});
+
+socket.on("clear_buzzed", () => {
+  buzzedArea.innerHTML = "&nbsp;";
+});
+
+socket.on("reveal", data => {
+  questionArea.textContent = data.question;
+  answerArea.textContent = `正解：${data.answer}`;
+});
+
+socket.on("clear_display", () => {
+  questionArea.textContent = "";
+  answerArea.textContent = "";
+  counter.textContent = "";
+  buzzedArea.innerHTML = "&nbsp;";
+  if (isMaster) setState("init");
+});
+
+socket.on("enable_buzz", flag => {
+  buzzBtn.disabled = !flag;
+});
+
+socket.on("enable_end", () => {
+  btnEnd.disabled = false;
+});
+
+socket.on("players", ps => {
+  players.innerHTML = "";
+  Object.values(ps).forEach(p => {
+    players.innerHTML += `<li>${p.name} : ${p.score}</li>`;
+  });
+});
+
+socket.on("final", result => {
+  players.innerHTML = "";
+  const max = Math.max(...result.map(p => p.score));
+  result.forEach(p => {
+    const mark = p.score === max ? "🏆️ " : "";
+    players.innerHTML += `<li>${mark}${p.name} : ${p.score}</li>`;
+  });
+  setState("finished");
+});
+
+/* ===== エラーメッセージ ===== */
+socket.on("error_msg", msg => {
+  alert(msg);
+  currentRoom = null;
+});
+
+/* =====================================================
+   ★ ルーム解散（参加者側も確実にアラート表示）
+===================================================== */
+socket.on("room_closed", () => {
+  const message = isMaster
+    ? "ルームを解散しました"
+    : "司会者がルームを解散しました";
+
+  // alert を確実に表示
+  alert(message);
+
+  // alert 完了後に遅延リロード
+  setTimeout(() => {
+    location.reload();
+  }, 200);
+});

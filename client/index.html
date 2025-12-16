@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>クイズ大会</title>
+
+  <!-- ★ スマホ対応必須 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 0.5em;
+    }
+
+    /* ===== 問題番号 ===== */
+    #counter {
+      min-height: 1.5em;
+      margin-bottom: 0.5em;
+    }
+
+    /* ===== 問題文 ===== */
+    #questionArea {
+      min-height: 6em;
+      max-height: 6em;
+      overflow-y: auto;
+      max-width: 100%;
+      font-size: 1.5em;
+      line-height: 1.6;
+      word-break: break-word;
+      white-space: pre-wrap;
+      border-bottom: 1px solid #ccc;
+      padding-bottom: 0.5em;
+    }
+
+    #answerArea {
+      min-height: 2em;
+      font-size: 1.2em;
+      color: darkgreen;
+      margin-top: 0.5em;
+    }
+
+    #buzzed {
+      min-height: 1.5em;
+      margin-top: 0.5em;
+      font-weight: bold;
+    }
+
+    #controlArea {
+      margin-top: 1em;
+    }
+
+    /* ===== ボタン折り返し対応 ===== */
+    #masterControls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4em;
+    }
+
+    #masterControls button {
+      margin-right: 0;
+    }
+
+    /* ===== スマホ向け調整 ===== */
+    @media (max-width: 600px) {
+      #questionArea {
+        font-size: 1.2em;
+        min-height: 7em;
+        max-height: 7em;
+      }
+
+      #answerArea {
+        font-size: 1em;
+      }
+
+      button {
+        font-size: 1em;
+        padding: 0.4em 0.6em;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<h1>クイズ大会</h1>
+
+<!-- ===== 入室画面 ===== -->
+<div id="entry">
+  <!-- ★ 使用頻度が高い「参加」を先頭 & デフォルトに -->
+  <label>
+    <input type="radio" name="mode" value="join" checked>
+    ルーム参加（回答者）
+  </label>
+  <label>
+    <input type="radio" name="mode" value="create">
+    ルーム作成（司会）
+  </label>
+
+  <br><br>
+
+  <input id="name" placeholder="名前">
+  <input id="room" placeholder="ルームID">
+  <br><br>
+
+  <button onclick="enter()">決定</button>
+</div>
+
+<hr>
+
+<!-- ===== ゲーム画面 ===== -->
+<div id="game" style="display:none;">
+
+  <!-- 問題番号 -->
+  <h2 id="counter"></h2>
+
+  <!-- 問題文 -->
+  <div id="questionArea"></div>
+
+  <!-- 正解表示 -->
+  <div id="answerArea"></div>
+
+  <!-- 早押し表示 -->
+  <div id="buzzed">&nbsp;</div>
+
+  <div id="controlArea">
+    <!-- 回答者用 -->
+    <button id="buzzBtn" onclick="buzz()" disabled>早押し</button>
+
+    <!-- 司会者用 -->
+    <div id="masterControls" style="display:none;">
+      <button onclick="nextQ()">出題</button>
+      <button onclick="wrong()">誤答</button>
+      <button onclick="resume()">再開</button>
+      <button onclick="timeout()">時間切れ</button>
+      <button onclick="correct()">正解</button>
+      <button onclick="clearDisplay()">消去</button>
+      <button onclick="end()">結果</button>
+      <!-- ★ 結果後のみ有効化される想定 -->
+      <button onclick="closeRoom()">ルーム解散</button>
+    </div>
+  </div>
+
+  <h3>得点</h3>
+  <ul id="players"></ul>
+</div>
+
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
