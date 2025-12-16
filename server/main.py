@@ -1,9 +1,21 @@
 from fastapi import FastAPI
 import socketio, csv, asyncio
 
-sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
-app = FastAPI()
-app.mount("/", socketio.ASGIApp(sio, other_asgi_app=app))
+# =====================================================
+# Socket.IO + FastAPI 正しい ASGI 構成
+# =====================================================
+sio = socketio.AsyncServer(
+    async_mode="asgi",
+    cors_allowed_origins="*"
+)
+
+fastapi_app = FastAPI()
+
+# ★ FastAPI を Socket.IO の下にぶら下げる
+app = socketio.ASGIApp(
+    sio,
+    other_asgi_app=fastapi_app
+)
 
 rooms = {}
 
@@ -268,7 +280,6 @@ async def close_room(sid, data):
     if sid != master_sid:
         return
 
-    # ★ 全参加者の sid に直接送信（参加者側も必ず届く）
     for p in r["players"].values():
         await sio.emit("room_closed", to=p["sid"])
 
