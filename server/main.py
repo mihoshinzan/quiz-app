@@ -26,20 +26,18 @@ sio = socketio.AsyncServer(
 # ===============================
 fastapi_app = FastAPI()
 
-# 静的ファイル（app.js 等）
 fastapi_app.mount(
     "/static",
     StaticFiles(directory=CLIENT_DIR),
     name="static"
 )
 
-# ルート → index.html
 @fastapi_app.get("/")
 async def index():
     return FileResponse(CLIENT_DIR / "index.html")
 
 # ===============================
-# ASGI 統合（★最重要）
+# ASGI 統合
 # ===============================
 app = socketio.ASGIApp(
     sio,
@@ -112,6 +110,42 @@ async def join_room(sid, data):
 
     if r["current"] >= 0:
         await sio.emit("counter", {"cur": r["current"] + 1}, to=sid)
+
+# =====================================================
+# 退室（参加者）
+# =====================================================
+@sio.event
+async def leave_room(sid, data):
+    room = data["roomId"]
+    r = rooms.get(room)
+    if not r:
+        return
+
+    # sid → user_id 特定
+    user_id = next(
+        (uid for uid, p in r["players"].items() if p["sid"] == sid),
+        None
+    )
+    if not user_id:
+        return
+
+    # 司会者は退室不可（ルーム解散のみ）
+    if user_id == r["master_user_id"]:
+        return
+
+    # 早押し中だった場合の後始末
+    q = r.get("quiz")
+    if q and q.get("buzzed_sid") == user_id:
+        q["buzzed_sid"] = None
+        q["active"] = True
+        await sio.emit("clear_buzzed", room=room)
+        await sio.emit("enable_buzz", True, room=room)
+
+    # プレイヤー削除
+    del r["players"][user_id]
+
+    await sio.leave_room(sid, room)
+    await sio.emit("players", r["players"], room=room)
 
 # =====================================================
 # 出題

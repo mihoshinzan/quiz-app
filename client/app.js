@@ -26,6 +26,7 @@ const counter = document.getElementById("counter");
 const players = document.getElementById("players");
 
 const buzzBtn = document.getElementById("buzzBtn");
+const leaveBtn = document.getElementById("leaveBtn");
 const masterControls = document.getElementById("masterControls");
 
 /* ★ ルームID表示 */
@@ -44,6 +45,9 @@ const btnClose   = masterControls.querySelector('button[onclick="closeRoom()"]')
 
 let currentRoom = null;
 let isMaster = false;
+
+/* ★ 大会開始フラグ（最初の出題後は true） */
+let gameStarted = false;
 
 /* =====================================================
    司会者ボタン状態
@@ -85,12 +89,49 @@ function enter() {
   }
 
   currentRoom = room;
+  gameStarted = false;
+
   const mode = document.querySelector('input[name="mode"]:checked').value;
 
   socket.emit(
     mode === "create" ? "create_room" : "join_room",
     { roomId: room, name, userId }
   );
+}
+
+/* =====================================================
+   退室（参加者用）
+===================================================== */
+function leaveRoom() {
+  if (!confirm("ルームから退室しますか？")) return;
+
+  socket.emit("leave_room", { roomId: currentRoom });
+  resetToEntry();
+}
+
+/* =====================================================
+   画面リセット
+===================================================== */
+function resetToEntry() {
+  currentRoom = null;
+  isMaster = false;
+  gameStarted = false;
+
+  entry.style.display = "block";
+  game.style.display = "none";
+
+  questionArea.textContent = "";
+  answerArea.textContent = "";
+  buzzedArea.innerHTML = "&nbsp;";
+  counter.textContent = "";
+  players.innerHTML = "";
+
+  buzzBtn.disabled = true;
+  buzzBtn.style.display = "inline";
+  leaveBtn.style.display = "none";
+
+  masterControls.style.display = "none";
+  roomInfo.style.display = "none";
 }
 
 /* =====================================================
@@ -104,6 +145,11 @@ function nextQ() {
   questionArea.textContent = "";
   answerArea.textContent = "";
   buzzedArea.innerHTML = "&nbsp;";
+
+  /* ★ 最初の出題で大会開始 */
+  gameStarted = true;
+  leaveBtn.style.display = "none";
+
   socket.emit("next_question", { roomId: currentRoom });
   setState("asking");
 }
@@ -155,10 +201,10 @@ socket.on("role", data => {
 
   if (isMaster) {
     buzzBtn.style.display = "none";
+    leaveBtn.style.display = "none";
     masterControls.style.display = "flex";
     setState("init");
 
-    /* ★ 司会者のみルームID表示 */
     roomIdText.textContent = currentRoom;
     roomInfo.style.display = "block";
   } else {
@@ -166,6 +212,8 @@ socket.on("role", data => {
     masterControls.style.display = "none";
     buzzBtn.disabled = true;
 
+    /* ★ 出題前のみ退室可 */
+    leaveBtn.style.display = gameStarted ? "none" : "inline";
     roomInfo.style.display = "none";
   }
 });
@@ -204,20 +252,6 @@ socket.on("enable_buzz", flag => {
   buzzBtn.disabled = !flag;
 });
 
-/* ===== 再接続時の復元 ===== */
-socket.on("restore_question", data => {
-  questionArea.textContent = data.text || "";
-  answerArea.textContent = data.answer ? `正解：${data.answer}` : "";
-
-  if (data.buzzed_name) {
-    buzzedArea.innerHTML = `💡 <strong>${data.buzzed_name}</strong>さんが回答者です！`;
-  } else {
-    buzzedArea.innerHTML = "&nbsp;";
-  }
-
-  buzzBtn.disabled = !data.enable_buzz;
-});
-
 /* ===== 得点 ===== */
 socket.on("players", ps => {
   players.innerHTML = "";
@@ -244,7 +278,7 @@ socket.on("enable_end", () => {
 /* ===== エラー ===== */
 socket.on("error_msg", msg => {
   alert(msg);
-  currentRoom = null;
+  resetToEntry();
 });
 
 /* ===== ルーム解散 ===== */
@@ -254,8 +288,5 @@ socket.on("room_closed", () => {
     : "司会者がルームを解散しました";
 
   alert(message);
-
-  setTimeout(() => {
-    location.reload();
-  }, 200);
+  resetToEntry();
 });
