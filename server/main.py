@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-import socketio, csv, asyncio
+import socketio
+import csv
+import asyncio
 from pathlib import Path
 
 # ===============================
@@ -12,23 +14,37 @@ CLIENT_DIR = BASE_DIR / "client"
 QUESTIONS_FILE = BASE_DIR / "server" / "questions.csv"
 
 # ===============================
-# FastAPI / Socket.IO
+# Socket.IO
 # ===============================
-sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
-app = FastAPI()
-
-# Socket.IO は専用パスにマウント（★再帰防止）
-app.mount("/socket.io", socketio.ASGIApp(sio))
-
-# 静的ファイル配信（app.js など）
-app.mount("/static", StaticFiles(directory=CLIENT_DIR), name="static")
+sio = socketio.AsyncServer(
+    async_mode="asgi",
+    cors_allowed_origins="*"
+)
 
 # ===============================
+# FastAPI
+# ===============================
+fastapi_app = FastAPI()
+
+# 静的ファイル（app.js 等）
+fastapi_app.mount(
+    "/static",
+    StaticFiles(directory=CLIENT_DIR),
+    name="static"
+)
+
 # ルート → index.html
-# ===============================
-@app.get("/")
+@fastapi_app.get("/")
 async def index():
     return FileResponse(CLIENT_DIR / "index.html")
+
+# ===============================
+# ASGI 統合（★最重要）
+# ===============================
+app = socketio.ASGIApp(
+    sio,
+    other_asgi_app=fastapi_app
+)
 
 # ===============================
 # データ
@@ -68,7 +84,7 @@ async def create_room(sid, data):
     await sio.emit("players", rooms[room]["players"], room=room)
 
 # =====================================================
-# ルーム参加 / 再接続
+# ルーム参加
 # =====================================================
 @sio.event
 async def join_room(sid, data):
@@ -107,8 +123,7 @@ async def next_question(sid, data):
     if not r:
         return
 
-    master_sid = r["players"][r["master_user_id"]]["sid"]
-    if sid != master_sid:
+    if sid != r["players"][r["master_user_id"]]["sid"]:
         return
 
     r["current"] += 1
@@ -239,8 +254,7 @@ async def clear_display(sid, data):
     if not r:
         return
 
-    master_sid = r["players"][r["master_user_id"]]["sid"]
-    if sid != master_sid:
+    if sid != r["players"][r["master_user_id"]]["sid"]:
         return
 
     r["quiz"] = None
@@ -274,8 +288,7 @@ async def close_room(sid, data):
     if not r:
         return
 
-    master_sid = r["players"][r["master_user_id"]]["sid"]
-    if sid != master_sid:
+    if sid != r["players"][r["master_user_id"]]["sid"]:
         return
 
     for p in r["players"].values():

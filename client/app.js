@@ -28,6 +28,10 @@ const players = document.getElementById("players");
 const buzzBtn = document.getElementById("buzzBtn");
 const masterControls = document.getElementById("masterControls");
 
+/* ★ ルームID表示 */
+const roomInfo = document.getElementById("roomInfo");
+const roomIdText = document.getElementById("roomIdText");
+
 // 司会者ボタン
 const btnNext    = masterControls.querySelector('button[onclick="nextQ()"]');
 const btnWrong   = masterControls.querySelector('button[onclick="wrong()"]');
@@ -148,14 +152,21 @@ socket.on("joined", () => {
 
 socket.on("role", data => {
   isMaster = data.isMaster;
+
   if (isMaster) {
     buzzBtn.style.display = "none";
     masterControls.style.display = "flex";
     setState("init");
+
+    /* ★ 司会者のみルームID表示 */
+    roomIdText.textContent = currentRoom;
+    roomInfo.style.display = "block";
   } else {
     buzzBtn.style.display = "inline";
     masterControls.style.display = "none";
     buzzBtn.disabled = true;
+
+    roomInfo.style.display = "none";
   }
 });
 

@@ -17,6 +17,15 @@
       padding: 0.5em;
     }
 
+    /* ===== ルームID表示 ===== */
+    #roomInfo {
+      font-size: 0.9em;
+      color: #555;
+      margin-top: -0.5em;
+      margin-bottom: 1em;
+      display: none; /* ★ 初期は非表示 */
+    }
+
     /* ===== 問題番号 ===== */
     #counter {
       min-height: 1.5em;
@@ -87,6 +96,8 @@
 <body>
 
 <h1>クイズ大会</h1>
+<!-- ★ ルームID表示行（司会者のみJSで表示） -->
+<div id="roomInfo">（ルームID：<span id="roomIdText"></span>）</div>
 
 <!-- ===== 入室画面 ===== -->
 <div id="entry">
@@ -148,7 +159,6 @@
 </div>
 
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-<!-- ★ ここが重要 -->
 <script src="/static/app.js" defer></script>
 
 </body>
