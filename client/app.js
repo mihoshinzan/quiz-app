@@ -46,7 +46,7 @@ const btnClose   = masterControls.querySelector('button[onclick="closeRoom()"]')
 let currentRoom = null;
 let isMaster = false;
 
-/* ★ 大会開始フラグ（最初の出題後は true） */
+/* ★ 大会開始フラグ */
 let gameStarted = false;
 
 /* =====================================================
@@ -145,11 +145,6 @@ function nextQ() {
   questionArea.textContent = "";
   answerArea.textContent = "";
   buzzedArea.innerHTML = "&nbsp;";
-
-  /* ★ 最初の出題で大会開始 */
-  gameStarted = true;
-  leaveBtn.style.display = "none";
-
   socket.emit("next_question", { roomId: currentRoom });
   setState("asking");
 }
@@ -212,18 +207,23 @@ socket.on("role", data => {
     masterControls.style.display = "none";
     buzzBtn.disabled = true;
 
-    /* ★ 出題前のみ退室可 */
     leaveBtn.style.display = gameStarted ? "none" : "inline";
     roomInfo.style.display = "none";
   }
 });
 
-socket.on("char", c => {
-  questionArea.textContent += c;
-});
-
+/* ★ 大会開始検知（最重要） */
 socket.on("counter", c => {
   counter.textContent = c.cur ? `第 ${c.cur} 問` : "";
+
+  if (c.cur && !gameStarted) {
+    gameStarted = true;
+    leaveBtn.style.display = "none";
+  }
+});
+
+socket.on("char", c => {
+  questionArea.textContent += c;
 });
 
 socket.on("buzzed", data => {
