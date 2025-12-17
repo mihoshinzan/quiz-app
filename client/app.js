@@ -212,7 +212,7 @@ socket.on("role", data => {
   }
 });
 
-/* ★ 大会開始検知（最重要） */
+/* ★ 大会開始検知 */
 socket.on("counter", c => {
   counter.textContent = c.cur ? `第 ${c.cur} 問` : "";
 
@@ -222,6 +222,26 @@ socket.on("counter", c => {
   }
 });
 
+/* ★ 完全同期（再接続時） */
+socket.on("sync_state", data => {
+  questionArea.textContent = data.questionText || "";
+
+  if (data.answer) {
+    answerArea.textContent = `正解：${data.answer}`;
+  } else {
+    answerArea.textContent = "";
+  }
+
+  if (data.buzzedName) {
+    buzzedArea.innerHTML = `💡 <strong>${data.buzzedName}</strong>さんが回答者です！`;
+  } else {
+    buzzedArea.innerHTML = "&nbsp;";
+  }
+
+  buzzBtn.disabled = !data.enableBuzz;
+});
+
+/* 通常の逐次表示 */
 socket.on("char", c => {
   questionArea.textContent += c;
 });

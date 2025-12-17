@@ -82,7 +82,7 @@ async def create_room(sid, data):
     await sio.emit("players", rooms[room]["players"], room=room)
 
 # =====================================================
-# ルーム参加
+# ルーム参加（★完全同期対応）
 # =====================================================
 @sio.event
 async def join_room(sid, data):
@@ -108,8 +108,25 @@ async def join_room(sid, data):
     await sio.emit("role", {"isMaster": user_id == r["master_user_id"]}, to=sid)
     await sio.emit("players", r["players"], room=room)
 
+    # ===== 現在の状態を完全同期 =====
     if r["current"] >= 0:
         await sio.emit("counter", {"cur": r["current"] + 1}, to=sid)
+
+    q = r.get("quiz")
+    if q:
+        await sio.emit(
+            "sync_state",
+            {
+                "questionText": q["text"][:q["index"]],
+                "answer": q["answer"] if q.get("revealed") else None,
+                "enableBuzz": q["active"] and not q["buzzed_sid"],
+                "buzzedName": (
+                    r["players"][q["buzzed_sid"]]["name"]
+                    if q["buzzed_sid"] else None
+                )
+            },
+            to=sid
+        )
 
 # =====================================================
 # 退室（参加者）
@@ -121,19 +138,13 @@ async def leave_room(sid, data):
     if not r:
         return
 
-    # sid → user_id 特定
     user_id = next(
         (uid for uid, p in r["players"].items() if p["sid"] == sid),
         None
     )
-    if not user_id:
+    if not user_id or user_id == r["master_user_id"]:
         return
 
-    # 司会者は退室不可（ルーム解散のみ）
-    if user_id == r["master_user_id"]:
-        return
-
-    # 早押し中だった場合の後始末
     q = r.get("quiz")
     if q and q.get("buzzed_sid") == user_id:
         q["buzzed_sid"] = None
@@ -141,9 +152,7 @@ async def leave_room(sid, data):
         await sio.emit("clear_buzzed", room=room)
         await sio.emit("enable_buzz", True, room=room)
 
-    # プレイヤー削除
     del r["players"][user_id]
-
     await sio.leave_room(sid, room)
     await sio.emit("players", r["players"], room=room)
 
@@ -170,7 +179,8 @@ async def next_question(sid, data):
         "answer": qdata["answer"],
         "index": 0,
         "active": True,
-        "buzzed_sid": None
+        "buzzed_sid": None,
+        "revealed": False
     }
 
     await sio.emit("counter", {"cur": r["current"] + 1}, room=room)
@@ -268,9 +278,14 @@ async def judge(sid, data):
         r["players"][q["buzzed_sid"]]["score"] += 10
 
     q["active"] = False
+    q["revealed"] = True
     q["buzzed_sid"] = None
 
-    await sio.emit("reveal", {"question": q["text"], "answer": q["answer"]}, room=room)
+    await sio.emit(
+        "reveal",
+        {"question": q["text"], "answer": q["answer"]},
+        room=room
+    )
     await sio.emit("players", r["players"], room=room)
     await sio.emit("enable_buzz", False, room=room)
     await sio.emit("clear_buzzed", room=room)
