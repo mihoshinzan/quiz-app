@@ -2,152 +2,409 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>クイズ大会</title>
-
-  <!-- ★ スマホ対応必須 -->
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-  <!-- ★ favicon（404対策） -->
+  <title>早押しクイズ大会</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <link rel="icon" href="data:,">
 
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;700&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
+
   <style>
-    body {
-      font-family: sans-serif;
+    :root {
+      --bg-color: #0b0c15;
+      --panel-bg: #15161f;
+      --primary: #00f0ff;
+      --accent: #ff0055;
+      --success: #00ff41;
+      --gold: #ffd700;
+      --text-main: #ffffff;
+      --text-sub: #8892b0;
+
+      --glow: 0 0 10px var(--primary), 0 0 20px rgba(0, 240, 255, 0.4);
+      --font-jp: 'Zen Kaku Gothic New', sans-serif;
+      --font-num: 'Orbitron', sans-serif;
+    }
+
+    html, body {
       margin: 0;
-      padding: 0.5em;
+      padding: 0;
+      width: 100%;
+      height: 100dvh;
+      overflow: hidden;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      font-family: var(--font-jp);
+      box-sizing: border-box;
+      background-image:
+        linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
     }
 
-    /* ===== ルームID表示 ===== */
-    #roomInfo {
-      font-size: 0.9em;
-      color: #555;
-      margin-top: -0.5em;
-      margin-bottom: 1em;
-      display: none; /* ★ 初期は非表示 */
+    body {
+      display: flex;
+      flex-direction: column;
+      padding: 15px;
     }
 
-    /* ===== 問題番号 ===== */
-    #counter {
-      min-height: 1.5em;
-      margin-bottom: 0.5em;
+    /* === エントリー画面 === */
+    #entry {
+      width: 90%;
+      max-width: 400px;
+      margin: auto;
+      padding: 40px;
+      background: var(--panel-bg);
+      border: 1px solid #333;
+      border-radius: 8px;
+      text-align: center;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      z-index: 100;
     }
+    #entry input {
+      width: 100%;
+      padding: 12px;
+      margin: 10px 0;
+      background: #000;
+      border: 1px solid #444;
+      color: var(--primary);
+      font-size: 1.1em;
+      box-sizing: border-box;
+      outline: none;
+    }
+    #entry input:focus { border-color: var(--primary); }
 
-    /* ===== 問題文 ===== */
-    #questionArea {
-      min-height: 6em;
-      max-height: 6em;
-      overflow-y: auto;
-      max-width: 100%;
+    /* === ヘッダー === */
+    #headerInfo {
+      flex: 0 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      border-bottom: 2px solid #333;
+      padding-bottom: 10px;
+      margin-bottom: 15px;
+    }
+    h1 {
+      margin: 0;
+      /* 日本語タイトルなので日本語フォント優先 */
+      font-family: var(--font-jp);
+      font-weight: 700;
       font-size: 1.5em;
-      line-height: 1.6;
-      word-break: break-word;
-      white-space: pre-wrap;
-      border-bottom: 1px solid #ccc;
-      padding-bottom: 0.5em;
+      color: var(--text-sub);
+      letter-spacing: 1px;
+    }
+    #roomInfo {
+      font-family: var(--font-jp);
+      color: var(--primary);
+      font-size: 0.9em;
+    }
+    /* ID部分だけデジタルフォントにする */
+    #roomIdText {
+      font-family: var(--font-num);
+      font-weight: bold;
+      margin-left: 0.3em;
+    }
+
+    /* === ゲーム画面コンテナ === */
+    #game {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      min-height: 0;
+      max-width: 1200px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    /* 1. 問題表示エリア (高さ固定) */
+    #stage {
+      height: 35dvh;
+      flex: none;
+
+      background: rgba(0, 0, 0, 0.3);
+      border: 2px solid var(--primary);
+      box-shadow: var(--glow);
+      border-radius: 12px;
+      padding: 20px;
+
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      z-index: 1;
+    }
+
+    #counter {
+      font-family: var(--font-jp); /* 日本語フォントに変更 */
+      font-weight: bold;
+      color: var(--primary);
+      font-size: 1.2em;
+      opacity: 0.8;
+      margin-bottom: 0.5rem;
+      border-bottom: 1px dashed rgba(0, 240, 255, 0.3);
+      padding-bottom: 5px;
+      width: fit-content;
+      flex: 0 0 auto;
+    }
+
+    #questionArea {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      font-size: 2.5rem;
+      line-height: 1.4;
+      font-weight: 700;
+      text-shadow: 0 0 5px rgba(255,255,255,0.5);
+      overflow-y: auto;
+      word-break: break-all;
     }
 
     #answerArea {
-      min-height: 2em;
-      font-size: 1.2em;
-      color: darkgreen;
-      margin-top: 0.5em;
+      margin-top: 10px;
+      font-size: 1.8rem;
+      color: var(--success);
+      font-weight: bold;
+      text-shadow: 0 0 10px var(--success);
+      min-height: 2.5rem;
+      flex: 0 0 auto;
+    }
+
+    /* 2. 回答権表示エリア */
+    #buzzedContainer {
+      flex: 0 0 60px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin: 10px 0;
+      z-index: 10;
     }
 
     #buzzed {
-      min-height: 1.5em;
-      margin-top: 0.5em;
+      font-size: 1.2rem;
       font-weight: bold;
+      padding: 8px 30px;
+      border-radius: 50px;
+      transition: all 0.2s ease-out;
+      color: #444;
+      border: 2px solid #333;
+      background: rgba(0, 0, 0, 0.3);
     }
 
+    #buzzed.active {
+      font-size: 1.5rem;
+      color: #ffffff;
+      text-shadow: 0 0 8px var(--accent);
+      background: #000000;
+      border: 2px solid var(--accent);
+      box-shadow: 0 0 20px var(--accent);
+      transform: scale(1.1);
+    }
+
+    /* 3. 操作パネル */
     #controlArea {
-      margin-top: 1em;
+      flex: 0 0 auto;
+      background: #1a1a1a;
+      padding: 10px;
+      border: 1px solid #444;
+      border-radius: 8px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      z-index: 5;
     }
 
-    /* ===== ボタン折り返し対応 ===== */
-    #masterControls {
+    button {
+      background: transparent;
+      border: 1px solid var(--primary);
+      color: var(--primary);
+      padding: 10px 20px;
+      font-family: var(--font-jp);
+      font-size: 1rem;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    button:hover:not(:disabled) {
+      background: var(--primary);
+      color: #000;
+      box-shadow: 0 0 15px var(--primary);
+    }
+    button:disabled {
+      border-color: #444;
+      color: #444;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    #buzzBtn {
+      font-size: 1.6rem;
+      padding: 15px 0;
+      width: 100%;
+      max-width: 500px;
+      border-color: var(--accent);
+      color: var(--accent);
+      border-width: 2px;
+      background: rgba(255, 0, 85, 0.05);
+    }
+    #buzzBtn:hover:not(:disabled) {
+      background: var(--accent);
+      box-shadow: 0 0 20px var(--accent);
+      color: #fff;
+    }
+
+    #leaveBtn, button[onclick="closeRoom()"] {
+      border-color: #666;
+      color: #888;
+      font-size: 0.8rem;
+    }
+
+    /* 4. プレイヤーカード */
+    #scoreArea {
+      flex: 1;
+      min-height: 0;
+      border-top: 1px solid #333;
+      padding-top: 10px;
+      overflow-y: auto;
+    }
+
+    #players {
+      list-style: none;
+      padding: 0;
+      margin: 0;
       display: flex;
       flex-wrap: wrap;
-      gap: 0.4em;
+      gap: 8px;
+      justify-content: center;
     }
 
-    #masterControls button {
-      margin-right: 0;
+    #players li {
+      background: var(--panel-bg);
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 8px 12px;
+      min-width: 80px;
+      text-align: center;
+      font-size: 0.9rem;
+    }
+    #players li:contains('🏆️') {
+      border-color: var(--gold);
+      box-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
     }
 
-    /* ===== 退室ボタン ===== */
-    #leaveBtn {
-      margin-left: 0.5em;
+    #masterArea {
+      text-align: right;
+      font-size: 0.75rem;
+      color: #444;
+      margin-top: 5px;
+      padding-right: 5px;
     }
 
-    /* ===== スマホ向け調整 ===== */
-    @media (max-width: 600px) {
-      #questionArea {
-        font-size: 1.2em;
-        min-height: 7em;
-        max-height: 7em;
-      }
+    /* === リザルト画面 === */
+    #resultOverlay {
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(11, 12, 21, 0.95);
+      z-index: 999;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      animation: fadeIn 0.5s ease-out;
+    }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
-      #answerArea {
-        font-size: 1em;
-      }
+    #resultTitle {
+      font-family: var(--font-jp);
+      font-weight: 700;
+      font-size: 2.5rem;
+      color: var(--primary);
+      text-shadow: 0 0 20px var(--primary);
+      margin-bottom: 2rem;
+    }
+    #resultList {
+      list-style: none;
+      padding: 0;
+      width: 90%;
+      max-width: 600px;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+      max-height: 60vh;
+      overflow-y: auto;
+    }
+    .result-card {
+      background: var(--panel-bg);
+      border: 1px solid #444;
+      padding: 15px 20px;
+      border-radius: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 1.2rem;
+      opacity: 0;
+      animation: slideIn 0.5s ease-out forwards;
+    }
+    @keyframes slideIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    .result-card.winner {
+      border: 2px solid var(--gold);
+      background: linear-gradient(90deg, rgba(255, 215, 0, 0.1), transparent);
+      box-shadow: 0 0 20px rgba(255, 215, 0, 0.3);
+      font-weight: bold;
+    }
+    .result-card.winner .score { color: var(--gold); }
 
-      button {
-        font-size: 1em;
-        padding: 0.4em 0.6em;
-      }
+    @media (max-width: 768px) {
+      body { padding: 10px; }
+      #headerInfo { margin-bottom: 10px; padding-bottom: 5px; }
+      h1 { font-size: 1rem; }
+
+      #stage { height: 35dvh; padding: 15px; }
+      #questionArea { font-size: 1.6rem; }
+
+      #scoreArea { padding-top: 5px; }
     }
   </style>
 </head>
 <body>
 
-<h1>クイズ大会</h1>
-<!-- ★ ルームID表示行（司会者のみJSで表示） -->
-<div id="roomInfo">（ルームID：<span id="roomIdText"></span>）</div>
+<div id="headerInfo" style="display:none;">
+  <h1>早押しクイズ大会</h1>
+  <div id="roomInfo">ルームID：<span id="roomIdText"></span></div>
+</div>
 
-<!-- ===== 入室画面 ===== -->
 <div id="entry">
-  <label>
-    <input type="radio" name="mode" value="join" checked>
-    ルーム参加（回答者）
+  <h2 style="margin-top:0; color:var(--primary);">ログイン</h2>
+  <label style="display:block; text-align:left; cursor:pointer; margin-bottom:5px;">
+    <input type="radio" name="mode" value="join" checked style="width:auto;"> ルーム参加（回答者）
   </label>
-  <label>
-    <input type="radio" name="mode" value="create">
-    ルーム作成（司会）
+  <label style="display:block; text-align:left; cursor:pointer;">
+    <input type="radio" name="mode" value="create" style="width:auto;"> ルーム作成（司会者）
   </label>
-
-  <br><br>
-
+  <br>
   <input id="name" placeholder="名前">
   <input id="room" placeholder="ルームID">
   <br><br>
-
-  <button onclick="enter()">決定</button>
+  <button onclick="enter()" style="width:100%; font-size:1.2em;">入室</button>
 </div>
 
-<hr>
-
-<!-- ===== ゲーム画面 ===== -->
 <div id="game" style="display:none;">
+  <div id="stage">
+    <div id="counter"></div>
+    <div id="questionArea"></div>
+    <div id="answerArea"></div>
+  </div>
 
-  <!-- 問題番号 -->
-  <h2 id="counter"></h2>
-
-  <!-- 問題文 -->
-  <div id="questionArea"></div>
-
-  <!-- 正解表示 -->
-  <div id="answerArea"></div>
-
-  <!-- 早押し表示 -->
-  <div id="buzzed">&nbsp;</div>
+  <div id="buzzedContainer">
+    <div id="buzzed">回答権獲得者</div>
+  </div>
 
   <div id="controlArea">
-    <!-- 回答者用 -->
     <button id="buzzBtn" onclick="buzz()" disabled>早押し</button>
-    <!-- ★ 参加者用：退室 -->
-    <button id="leaveBtn" onclick="leaveRoom()">退室</button>
 
-    <!-- 司会者用 -->
     <div id="masterControls" style="display:none;">
       <button onclick="nextQ()">出題</button>
       <button onclick="wrong()">誤答</button>
@@ -158,14 +415,37 @@
       <button onclick="end()">結果</button>
       <button onclick="closeRoom()">ルーム解散</button>
     </div>
+
+    <button id="leaveBtn" onclick="leaveRoom()">退室</button>
   </div>
 
-  <h3>得点</h3>
-  <ul id="players"></ul>
+  <div id="scoreArea">
+    <ul id="players"></ul>
+    <div id="masterArea">
+      司会者：<span id="masterName">—</span>
+    </div>
+  </div>
+</div>
+
+<div id="resultOverlay">
+  <div id="resultTitle">最終結果</div>
+  <ul id="resultList"></ul>
+  <button id="closeResultBtn" onclick="closeResult()">ロビーに戻る</button>
 </div>
 
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 <script src="/static/app.js" defer></script>
-
+<script>
+  const obsHeader = document.getElementById('headerInfo');
+  const obsGame = document.getElementById('game');
+  const observer = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      if (mutation.target.id === 'game') {
+         obsHeader.style.display = mutation.target.style.display === 'block' ? 'flex' : 'none';
+      }
+    });
+  });
+  observer.observe(obsGame, { attributes: true, attributeFilter: ['style'] });
+</script>
 </body>
 </html>
