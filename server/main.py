@@ -251,15 +251,13 @@ async def join_room(sid, data):
 
     if is_master:
         await sio.emit("sync_state", r["state"], to=sid)
-        # ★削除: 停止していた文字送りを再開させる処理は不要のため削除
 
     q = r.get("quiz")
     if q:
-        # 現在の状態に合わせて、表示すべき文字数（途中or全文）を決定
-        if r["state"] in ["asking", "buzzed", "wrong", "timeout"]:
-            # 文字送りループは裏で動いているので、現在の index までを表示
-            display_text = q["text"][:q["index"]]
-        else:
+        display_text = q["text"][:q["index"]] if q["active"] else q["text"]
+
+        # 状態によっては全文表示
+        if r["state"] in ["show_answer", "all_done"]:
             display_text = q["text"]
 
         answer_text = ""
@@ -277,7 +275,7 @@ async def join_room(sid, data):
 
 
 # =====================================================
-# 退室
+# 退室（★修正箇所）
 # =====================================================
 @sio.event
 async def leave_room(sid, data):
@@ -290,21 +288,19 @@ async def leave_room(sid, data):
 
     # 司会者が落ちた場合
     if user_id == r["master_user_id"]:
-        # ★削除: 文字送りを停止する処理を削除
         return
 
+    # 回答権を持っている人が落ちた場合
     q = r.get("quiz")
     if q and q.get("buzzed_sid") == user_id:
-        q["buzzed_sid"] = None
-        q["active"] = True
-        r["state"] = "asking"
-        await sio.emit("clear_buzzed", room=room)
-        await sio.emit("enable_buzz", True, room=room)
+        # ★ここが修正ポイント:
+        # プレイヤーデータを削除せず、回答権もリセットせずに
+        # 単にSocketの切断処理だけ行って終了します。
+        # これにより、ユーザーデータはサーバーに残り、リロード復帰が可能になります。
+        await sio.leave_room(sid, room)
+        return
 
-        if r["master_user_id"] in r["players"]:
-            master_sid = r["players"][r["master_user_id"]]["sid"]
-            await sio.emit("sync_state", "asking", to=master_sid)
-
+    # 通常の退室処理
     del r["players"][user_id]
     await sio.leave_room(sid, room)
     await emit_players(room)
