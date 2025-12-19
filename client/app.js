@@ -106,7 +106,7 @@ function enter() {
   const mode = document.querySelector('input[name="mode"]:checked').value;
 
   if (mode === "create") {
-    // 司会者モード: ファイル読み込み
+    // 司会者モード
     const fileInput = document.getElementById("qFile");
     const file = fileInput.files[0];
 
@@ -117,6 +117,7 @@ function enter() {
 
     const reader = new FileReader();
     reader.onload = function(e) {
+      // ★バイナリとして送信 (文字化け回避のため)
       const fileContent = e.target.result;
       socket.emit("create_room", {
         roomId: room,
@@ -125,7 +126,7 @@ function enter() {
         fileContent: fileContent
       });
     };
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file); // ★ArrayBufferとして読む
 
   } else {
     // 参加者モード

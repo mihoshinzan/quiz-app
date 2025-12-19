@@ -5,20 +5,15 @@ import socketio
 import csv
 import asyncio
 import io
-import time  # ★追加
+import time
 from pathlib import Path
-from contextlib import asynccontextmanager  # ★追加(起動時タスク用)
+from contextlib import asynccontextmanager
 
 # ===============================
 # 設定
 # ===============================
 BASE_DIR = Path(__file__).resolve().parent.parent
 CLIENT_DIR = BASE_DIR / "client"
-SERVER_DIR = BASE_DIR / "server"
-
-# 読み込み候補ファイル
-QUESTIONS_CSV = SERVER_DIR / "questions.csv"
-QUESTIONS_TXT = SERVER_DIR / "questions.txt"
 
 # 自動解散までの猶予時間（秒）: 5分
 ROOM_TIMEOUT = 300
@@ -40,7 +35,6 @@ async def lifespan(app: FastAPI):
     # 起動時にクリーニングタスクを開始
     task = sio.start_background_task(cleanup_loop)
     yield
-    # 終了時の処理（必要なら）
 
 
 # ===============================
@@ -75,9 +69,35 @@ rooms = {}
 
 
 def parse_questions(file_content):
-    """受信したテキストデータをCSVとしてパースする"""
+    """
+    受信したデータ(bytesまたはstr)を適切なエンコーディングでデコードし、
+    CSVとしてパースする
+    """
+    text = ""
+
+    # 既に文字列ならそのまま使う
+    if isinstance(file_content, str):
+        text = file_content
+    else:
+        # バイナリならデコードを試みる
+        try:
+            # 1. UTF-8 (BOM付き対応)
+            text = file_content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            try:
+                # 2. Shift-JIS (Excel標準)
+                text = file_content.decode("cp932")
+            except UnicodeDecodeError:
+                print("Decode Error: Neither UTF-8 nor CP932")
+                return []
+        except AttributeError:
+            # 万が一その他の型が来た場合
+            text = str(file_content)
+
     try:
-        f = io.StringIO(file_content)
+        # 文字列をファイルオブジェクトのように扱う
+        # strip()で前後の余計な空白や改行を除去
+        f = io.StringIO(text.strip())
         return list(csv.DictReader(f))
     except Exception as e:
         print(f"Parse Error: {e}")
@@ -105,16 +125,12 @@ async def cleanup_loop():
         rooms_to_delete = []
 
         for room_id, r in rooms.items():
-            # 参加者が0人かどうか
             if len(r["players"]) == 0:
-                # empty_at が設定されていなければ設定
                 if r.get("empty_at") is None:
                     r["empty_at"] = now
-                # タイムアウト時間を超えていたら削除リスト入り
                 elif now - r["empty_at"] > ROOM_TIMEOUT:
                     rooms_to_delete.append(room_id)
             else:
-                # 人がいるならタイマーリセット
                 r["empty_at"] = None
 
         for room_id in rooms_to_delete:
@@ -123,11 +139,10 @@ async def cleanup_loop():
 
 
 # =====================================================
-# 切断検知（ブラウザ閉じなど）
+# 切断検知
 # =====================================================
 @sio.event
 async def disconnect(sid):
-    # どのルームにいたか全検索（効率は悪いが人数が少なければ問題ない）
     target_room = None
     target_user_id = None
 
@@ -140,7 +155,6 @@ async def disconnect(sid):
         if target_room: break
 
     if target_room and target_user_id:
-        # 退室処理を呼び出す
         await leave_room(sid, {"roomId": target_room})
 
 
@@ -160,7 +174,8 @@ async def create_room(sid, data):
 
     questions = parse_questions(file_content)
     if not questions:
-        await sio.emit("error_msg", "問題ファイルの読み込みに失敗しました。", to=sid)
+        await sio.emit("error_msg", "問題ファイルの読み込みに失敗しました。CSVの形式や文字コードを確認してください。",
+                       to=sid)
         return
 
     rooms[room] = {
@@ -173,7 +188,7 @@ async def create_room(sid, data):
         "current": -1,
         "quiz": None,
         "state": "init",
-        "empty_at": None  # ★空になった時刻
+        "empty_at": None
     }
 
     await sio.enter_room(sid, room)
@@ -197,7 +212,6 @@ async def join_room(sid, data):
         await sio.emit("error_msg", "存在しないルームIDです", to=sid)
         return
 
-    # 人が来たので削除タイマーリセット
     r["empty_at"] = None
 
     if user_id in r["players"]:
@@ -220,7 +234,6 @@ async def join_room(sid, data):
     if r["current"] >= 0:
         await sio.emit("counter", {"cur": r["current"] + 1}, to=sid)
 
-    # 状態復元
     if is_master:
         await sio.emit("sync_state", r["state"], to=sid)
 
@@ -253,7 +266,6 @@ async def leave_room(sid, data):
     user_id = next((uid for uid, p in r["players"].items() if p["sid"] == sid), None)
     if not user_id: return
 
-    # 早押し中の人が抜けた場合のケア
     q = r.get("quiz")
     if q and q.get("buzzed_sid") == user_id:
         q["buzzed_sid"] = None
@@ -262,23 +274,20 @@ async def leave_room(sid, data):
         await sio.emit("clear_buzzed", room=room)
         await sio.emit("enable_buzz", True, room=room)
 
-        # 司会者がいるなら状態同期
         if r["master_user_id"] in r["players"]:
             master_sid = r["players"][r["master_user_id"]]["sid"]
             await sio.emit("sync_state", "asking", to=master_sid)
 
-    # プレイヤー削除
     del r["players"][user_id]
     await sio.leave_room(sid, room)
     await emit_players(room)
 
-    # ★もし誰もいなくなったらタイマーセット
     if len(r["players"]) == 0:
         r["empty_at"] = time.time()
 
 
 # =====================================================
-# ゲーム進行系イベント（変更なし）
+# ゲーム進行
 # =====================================================
 @sio.event
 async def next_question(sid, data):

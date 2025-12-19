@@ -140,7 +140,7 @@
       margin: 0 auto;
     }
 
-    /* 1. 問題表示エリア */
+    /* 1. 問題表示エリア (高さ固定) */
     #stage {
       height: 35dvh;
       flex: none;
@@ -190,34 +190,45 @@
       flex: 0 0 auto;
     }
 
-    /* 2. 回答権表示エリア */
+    /* === 2. 回答権表示エリア (レイアウト固定版) === */
     #buzzedContainer {
-      flex: 0 0 60px;
+      /* 少し余裕を持たせて固定 */
+      flex: 0 0 80px;
       display: flex;
       justify-content: center;
       align-items: center;
-      margin: 10px 0;
+      margin: 5px 0;
       z-index: 10;
     }
 
     #buzzed {
-      font-size: 1.2rem;
+      /* 最初からActive時と同じフォントサイズで場所を確保 */
+      font-size: 1.5rem;
       font-weight: bold;
       padding: 8px 30px;
       border-radius: 50px;
-      transition: all 0.2s ease-out;
+
+      /* アニメーション設定 */
+      transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+
+      /* 待機中のスタイル */
       color: #444;
       border: 2px solid #333;
       background: rgba(0, 0, 0, 0.3);
+
+      /* 見た目だけ少し小さくしておく（レイアウトには影響しない） */
+      transform: scale(0.9);
     }
 
     #buzzed.active {
-      font-size: 1.5rem;
+      /* Active中のスタイル */
       color: #ffffff;
       text-shadow: 0 0 8px var(--accent);
       background: #000000;
       border: 2px solid var(--accent);
       box-shadow: 0 0 20px var(--accent);
+
+      /* 見た目を拡大 */
       transform: scale(1.1);
     }
 
