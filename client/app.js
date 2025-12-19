@@ -1,7 +1,7 @@
 const socket = io();
 
 /* =====================================================
-   userId
+   userId（永続）
 ===================================================== */
 let userId = localStorage.getItem("quiz_user_id");
 if (!userId) {
@@ -10,7 +10,7 @@ if (!userId) {
 }
 
 /* =====================================================
-   DOM
+   DOM Elements
 ===================================================== */
 const entry = document.getElementById("entry");
 const nameInput = document.getElementById("name");
@@ -55,7 +55,7 @@ let gameStarted = false;
 const DEFAULT_BUZZED_TEXT = "回答権獲得者";
 
 /* =====================================================
-   Button State
+   司会者ボタン状態
 ===================================================== */
 const MasterButtonState = {
   init:        { next:true,  wrong:false, resume:false, timeout:false, correct:false, clear:false, end:false },
@@ -89,7 +89,7 @@ function resetBuzzedDisplay() {
 }
 
 /* =====================================================
-   Action
+   アクション
 ===================================================== */
 function enter() {
   const name = nameInput.value.trim();
@@ -104,10 +104,37 @@ function enter() {
   gameStarted = false;
 
   const mode = document.querySelector('input[name="mode"]:checked').value;
-  socket.emit(
-    mode === "create" ? "create_room" : "join_room",
-    { roomId: room, name, userId }
-  );
+
+  if (mode === "create") {
+    // 司会者モード: ファイル読み込み
+    const fileInput = document.getElementById("qFile");
+    const file = fileInput.files[0];
+
+    if (!file) {
+      alert("問題ファイル(csv/txt)を選択してください");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const fileContent = e.target.result;
+      socket.emit("create_room", {
+        roomId: room,
+        name: name,
+        userId: userId,
+        fileContent: fileContent
+      });
+    };
+    reader.readAsText(file);
+
+  } else {
+    // 参加者モード
+    socket.emit("join_room", {
+      roomId: room,
+      name: name,
+      userId: userId
+    });
+  }
 }
 
 function leaveRoom() {
@@ -123,7 +150,7 @@ function resetToEntry() {
 
   entry.style.display = "block";
   game.style.display = "none";
-  resultOverlay.style.display = "none"; // リザルトも消す
+  resultOverlay.style.display = "none";
 
   questionArea.textContent = "";
   answerArea.textContent = "";
@@ -231,15 +258,10 @@ socket.on("players", ps => {
   });
 });
 
-/* =====================================================
-   ★リザルト演出（修正箇所）
-===================================================== */
 socket.on("final", result => {
-  // 1. 通常のリスト更新
   players.innerHTML = "";
   const filtered = isMaster ? result.filter(p => p.name !== myName) : result;
 
-  // 参加者ゼロの場合のガード
   if (filtered.length === 0) {
     players.innerHTML = "<li>参加者なし</li>";
     setState("finished");
@@ -252,9 +274,8 @@ socket.on("final", result => {
     players.innerHTML += `<li>${mark}${p.name} : ${p.score}</li>`;
   });
 
-  // 2. リザルトオーバーレイの構築
+  // リザルトオーバーレイ
   resultList.innerHTML = "";
-  // 順位付け（同点対応なしの単純ソート済みリストと仮定）
   filtered.forEach((p, index) => {
     const rank = index + 1;
     const isWinner = (p.score === max && p.score > 0);
@@ -262,8 +283,6 @@ socket.on("final", result => {
 
     li.className = "result-card";
     if (isWinner) li.classList.add("winner");
-
-    // アニメーションの遅延（上位ほど後から、あるいは順に）
     li.style.animationDelay = `${index * 0.1}s`;
 
     li.innerHTML = `
@@ -275,23 +294,17 @@ socket.on("final", result => {
     resultList.appendChild(li);
   });
 
-  // 3. 表示と紙吹雪
   resultOverlay.style.display = "flex";
   setState("finished");
 
-  // 紙吹雪エフェクト (canvas-confetti)
-  // 左右から発射
+  // 紙吹雪
   const count = 200;
-  const defaults = {
-    origin: { y: 0.7 }
-  };
-
+  const defaults = { origin: { y: 0.7 } };
   function fire(particleRatio, opts) {
     confetti(Object.assign({}, defaults, opts, {
       particleCount: Math.floor(count * particleRatio)
     }));
   }
-
   fire(0.25, { spread: 26, startVelocity: 55 });
   fire(0.2, { spread: 60 });
   fire(0.35, { spread: 100, decay: 0.91, scalar: 0.8 });

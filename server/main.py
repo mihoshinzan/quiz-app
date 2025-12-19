@@ -4,14 +4,24 @@ from fastapi.responses import FileResponse
 import socketio
 import csv
 import asyncio
+import io
+import time  # ★追加
 from pathlib import Path
+from contextlib import asynccontextmanager  # ★追加(起動時タスク用)
 
 # ===============================
-# パス設定
+# 設定
 # ===============================
 BASE_DIR = Path(__file__).resolve().parent.parent
 CLIENT_DIR = BASE_DIR / "client"
-QUESTIONS_FILE = BASE_DIR / "server" / "questions.csv"
+SERVER_DIR = BASE_DIR / "server"
+
+# 読み込み候補ファイル
+QUESTIONS_CSV = SERVER_DIR / "questions.csv"
+QUESTIONS_TXT = SERVER_DIR / "questions.txt"
+
+# 自動解散までの猶予時間（秒）: 5分
+ROOM_TIMEOUT = 300
 
 # ===============================
 # Socket.IO
@@ -21,10 +31,22 @@ sio = socketio.AsyncServer(
     cors_allowed_origins="*"
 )
 
+
+# ===============================
+# ライフサイクル管理（定期タスク起動）
+# ===============================
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 起動時にクリーニングタスクを開始
+    task = sio.start_background_task(cleanup_loop)
+    yield
+    # 終了時の処理（必要なら）
+
+
 # ===============================
 # FastAPI
 # ===============================
-fastapi_app = FastAPI()
+fastapi_app = FastAPI(lifespan=lifespan)
 
 fastapi_app.mount(
     "/static",
@@ -52,22 +74,74 @@ app = socketio.ASGIApp(
 rooms = {}
 
 
-def load_questions():
-    with open(QUESTIONS_FILE, encoding="utf-8") as f:
+def parse_questions(file_content):
+    """受信したテキストデータをCSVとしてパースする"""
+    try:
+        f = io.StringIO(file_content)
         return list(csv.DictReader(f))
+    except Exception as e:
+        print(f"Parse Error: {e}")
+        return []
 
 
 def emit_players(room):
     """参加者リスト配信（司会者除く）"""
     r = rooms.get(room)
-    if not r:
-        return
+    if not r: return
 
     players_only = {
         uid: p for uid, p in r["players"].items()
         if uid != r["master_user_id"]
     }
     return sio.emit("players", players_only, room=room)
+
+
+# ★定期的にお掃除するループ
+async def cleanup_loop():
+    print("Cleanup task started.")
+    while True:
+        await asyncio.sleep(60)  # 1分ごとにチェック
+        now = time.time()
+        rooms_to_delete = []
+
+        for room_id, r in rooms.items():
+            # 参加者が0人かどうか
+            if len(r["players"]) == 0:
+                # empty_at が設定されていなければ設定
+                if r.get("empty_at") is None:
+                    r["empty_at"] = now
+                # タイムアウト時間を超えていたら削除リスト入り
+                elif now - r["empty_at"] > ROOM_TIMEOUT:
+                    rooms_to_delete.append(room_id)
+            else:
+                # 人がいるならタイマーリセット
+                r["empty_at"] = None
+
+        for room_id in rooms_to_delete:
+            print(f"Deleting empty room: {room_id}")
+            del rooms[room_id]
+
+
+# =====================================================
+# 切断検知（ブラウザ閉じなど）
+# =====================================================
+@sio.event
+async def disconnect(sid):
+    # どのルームにいたか全検索（効率は悪いが人数が少なければ問題ない）
+    target_room = None
+    target_user_id = None
+
+    for room_id, r in rooms.items():
+        for uid, p in r["players"].items():
+            if p["sid"] == sid:
+                target_room = room_id
+                target_user_id = uid
+                break
+        if target_room: break
+
+    if target_room and target_user_id:
+        # 退室処理を呼び出す
+        await leave_room(sid, {"roomId": target_room})
 
 
 # =====================================================
@@ -78,9 +152,15 @@ async def create_room(sid, data):
     room = data["roomId"]
     name = data["name"]
     user_id = data["userId"]
+    file_content = data.get("fileContent", "")
 
     if room in rooms:
         await sio.emit("error_msg", "そのルームIDは既に使われています", to=sid)
+        return
+
+    questions = parse_questions(file_content)
+    if not questions:
+        await sio.emit("error_msg", "問題ファイルの読み込みに失敗しました。", to=sid)
         return
 
     rooms[room] = {
@@ -89,23 +169,22 @@ async def create_room(sid, data):
         "players": {
             user_id: {"name": name, "score": 0, "sid": sid}
         },
-        "questions": load_questions(),
+        "questions": questions,
         "current": -1,
         "quiz": None,
-        "state": "init"  # ★ 状態管理変数を追加
+        "state": "init",
+        "empty_at": None  # ★空になった時刻
     }
 
     await sio.enter_room(sid, room)
     await sio.emit("joined", to=sid)
     await sio.emit("role", {"isMaster": True}, to=sid)
-
-    # 司会者情報を全体に通知
     await sio.emit("master_info", {"name": name}, room=room)
     await emit_players(room)
 
 
 # =====================================================
-# ルーム参加（兼 司会者復帰）
+# ルーム参加
 # =====================================================
 @sio.event
 async def join_room(sid, data):
@@ -118,10 +197,11 @@ async def join_room(sid, data):
         await sio.emit("error_msg", "存在しないルームIDです", to=sid)
         return
 
-    # プレイヤー情報更新 or 新規登録
+    # 人が来たので削除タイマーリセット
+    r["empty_at"] = None
+
     if user_id in r["players"]:
         r["players"][user_id]["sid"] = sid
-        # 名前が変更されている場合の対応
         r["players"][user_id]["name"] = name
     else:
         if name in [p["name"] for p in r["players"].values()]:
@@ -132,47 +212,33 @@ async def join_room(sid, data):
     await sio.enter_room(sid, room)
     await sio.emit("joined", to=sid)
 
-    # 司会者かどうかの判定
     is_master = (user_id == r["master_user_id"])
     await sio.emit("role", {"isMaster": is_master}, to=sid)
-
-    # 司会者情報の同期
     await sio.emit("master_info", {"name": r["master_name"]}, to=sid)
-
-    # 参加者リスト更新
     await emit_players(room)
 
-    # 問題番号同期
     if r["current"] >= 0:
         await sio.emit("counter", {"cur": r["current"] + 1}, to=sid)
 
-    # ★ 状態同期（リカバリー処理）
-    # 途中参加やリロードした人のために、現在の画面状態を送る
-    q = r.get("quiz")
-
-    # 1. 状態コードの送信 (司会者のボタン復帰用)
+    # 状態復元
     if is_master:
         await sio.emit("sync_state", r["state"], to=sid)
 
-    # 2. 画面表示の復元
+    q = r.get("quiz")
     if q:
-        # 問題文の復元（現在の表示文字数まで、または全文）
         display_text = q["text"][:q["index"]] if q["active"] else q["text"]
+        answer_text = ""
+        if r["state"] in ["show_answer", "all_done"]:
+            answer_text = f"正解：{q['answer']}"
 
-        display_data = {
-            "question": display_text,
-            "answer": f"正解：{q['answer']}" if not q["active"] and q["buzzed_sid"] is None and r[
-                "state"] == "show_answer" else ""
-        }
+        display_data = {"question": display_text, "answer": answer_text}
         await sio.emit("sync_display", display_data, to=sid)
 
-        # 早押し状態の復元
         if q["buzzed_sid"]:
             buzzed_name = r["players"][q["buzzed_sid"]]["name"]
             await sio.emit("buzzed", {"name": buzzed_name}, to=sid)
-        else:
-            # 早押しボタンの有効化状態
-            await sio.emit("enable_buzz", q["active"], to=sid)
+        elif r["state"] == "asking":
+            await sio.emit("enable_buzz", True, to=sid)
 
 
 # =====================================================
@@ -180,51 +246,48 @@ async def join_room(sid, data):
 # =====================================================
 @sio.event
 async def leave_room(sid, data):
-    room = data["roomId"]
+    room = data.get("roomId")
     r = rooms.get(room)
-    if not r:
-        return
+    if not r: return
 
     user_id = next((uid for uid, p in r["players"].items() if p["sid"] == sid), None)
-    if not user_id:
-        return
+    if not user_id: return
 
-    # 司会者の場合はルーム削除せず、単に切断扱いとする（復帰待ち）
-    if user_id == r["master_user_id"]:
-        # ここで delete してしまうと復帰できないので保持する
-        # 必要であれば一定時間後のGCなどを実装するが、今回は簡易化のため保持
-        return
-
-    # 早押し中の人が抜けた場合
+    # 早押し中の人が抜けた場合のケア
     q = r.get("quiz")
     if q and q.get("buzzed_sid") == user_id:
         q["buzzed_sid"] = None
         q["active"] = True
-        r["state"] = "asking"  # 状態を戻す
+        r["state"] = "asking"
         await sio.emit("clear_buzzed", room=room)
         await sio.emit("enable_buzz", True, room=room)
-        # 司会者への状態同期
-        master_sid = r["players"][r["master_user_id"]]["sid"]
-        await sio.emit("sync_state", "asking", to=master_sid)
 
+        # 司会者がいるなら状態同期
+        if r["master_user_id"] in r["players"]:
+            master_sid = r["players"][r["master_user_id"]]["sid"]
+            await sio.emit("sync_state", "asking", to=master_sid)
+
+    # プレイヤー削除
     del r["players"][user_id]
     await sio.leave_room(sid, room)
     await emit_players(room)
 
+    # ★もし誰もいなくなったらタイマーセット
+    if len(r["players"]) == 0:
+        r["empty_at"] = time.time()
+
 
 # =====================================================
-# 出題
+# ゲーム進行系イベント（変更なし）
 # =====================================================
 @sio.event
 async def next_question(sid, data):
     room = data["roomId"]
     r = rooms.get(room)
-    if not r or sid != r["players"][r["master_user_id"]]["sid"]:
-        return
+    if not r or sid != r["players"][r["master_user_id"]]["sid"]: return
 
     r["current"] += 1
-    if r["current"] >= len(r["questions"]):
-        return
+    if r["current"] >= len(r["questions"]): return
 
     qdata = r["questions"][r["current"]]
     r["quiz"] = {
@@ -234,7 +297,7 @@ async def next_question(sid, data):
         "active": True,
         "buzzed_sid": None
     }
-    r["state"] = "asking"  # ★
+    r["state"] = "asking"
 
     await sio.emit("counter", {"cur": r["current"] + 1}, room=room)
     await sio.emit("enable_buzz", True, room=room)
@@ -254,39 +317,30 @@ async def char_loop(room):
         await asyncio.sleep(1.0)
 
 
-# =====================================================
-# 早押し
-# =====================================================
 @sio.event
 async def buzz(sid, data):
     room = data["roomId"]
     r = rooms.get(room)
     if not r: return
-
     q = r["quiz"]
     if not q or not q["active"] or q["buzzed_sid"]: return
-
     user_id = next((uid for uid, p in r["players"].items() if p["sid"] == sid), None)
     if not user_id: return
 
     q["active"] = False
     q["buzzed_sid"] = user_id
-    r["state"] = "buzzed"  # ★
-
+    r["state"] = "buzzed"
     await sio.emit("buzzed", {"name": r["players"][user_id]["name"]}, room=room)
     await sio.emit("enable_buzz", False, room=room)
 
 
-# =====================================================
-# 誤答 / 再開 / 時間切れ
-# =====================================================
 @sio.event
 async def wrong(sid, data):
     room = data["roomId"]
     r = rooms.get(room)
     if r and r["quiz"]:
         r["quiz"]["buzzed_sid"] = None
-        r["state"] = "wrong"  # ★
+        r["state"] = "wrong"
         await sio.emit("clear_buzzed", room=room)
 
 
@@ -296,7 +350,7 @@ async def resume(sid, data):
     r = rooms.get(room)
     if r and r["quiz"]:
         r["quiz"]["active"] = True
-        r["state"] = "asking"  # ★
+        r["state"] = "asking"
         await sio.emit("enable_buzz", True, room=room)
         sio.start_background_task(char_loop, room)
 
@@ -308,39 +362,27 @@ async def timeout(sid, data):
     if r and r["quiz"]:
         r["quiz"]["active"] = False
         r["quiz"]["buzzed_sid"] = None
-        r["state"] = "timeout"  # ★
+        r["state"] = "timeout"
         await sio.emit("enable_buzz", False, room=room)
         await sio.emit("clear_buzzed", room=room)
 
 
-# =====================================================
-# 正解
-# =====================================================
 @sio.event
 async def judge(sid, data):
     room = data["roomId"]
     r = rooms.get(room)
     if not r or not r["quiz"]: return
-
     q = r["quiz"]
     if q["buzzed_sid"]:
         r["players"][q["buzzed_sid"]]["score"] += 10
-
     q["active"] = False
     q["buzzed_sid"] = None
 
-    # ★修正開始: 最終問題かどうかの判定分岐を追加
     if r["current"] == len(r["questions"]) - 1:
-        # 最終問題の場合: 状態を 'all_done' にし、司会者に通知
         r["state"] = "all_done"
-
-        # 司会者のボタン状態を強制的に更新（これで消去ボタンが無効化される）
-        # ※ judgeイベントを送った直後、クライアントは一時的に show_answer になるが、
-        #    即座にこの sync_state で all_done に上書きされます。
         master_sid = r["players"][r["master_user_id"]]["sid"]
         await sio.emit("sync_state", "all_done", to=master_sid)
     else:
-        # 通常の場合
         r["state"] = "show_answer"
 
     await sio.emit("reveal", {"question": q["text"], "answer": q["answer"]}, room=room)
@@ -348,20 +390,14 @@ async def judge(sid, data):
     await sio.emit("enable_buzz", False, room=room)
     await sio.emit("clear_buzzed", room=room)
 
-    if r["current"] == len(r["questions"]) - 1:
-        await sio.emit("enable_end", room=room)
 
-
-# =====================================================
-# 消去 / 結果 / 解散
-# =====================================================
 @sio.event
 async def clear_display(sid, data):
     room = data["roomId"]
     r = rooms.get(room)
     if r and sid == r["players"][r["master_user_id"]]["sid"]:
         r["quiz"] = None
-        r["state"] = "init"  # ★
+        r["state"] = "init"
         await sio.emit("clear_display", room=room)
 
 
@@ -375,7 +411,7 @@ async def end_game(sid, data):
             key=lambda p: p["score"],
             reverse=True
         )
-        r["state"] = "finished"  # ★
+        r["state"] = "finished"
         await sio.emit("final", ranking, room=room)
 
 

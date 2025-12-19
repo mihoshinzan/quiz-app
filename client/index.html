@@ -63,7 +63,9 @@
       box-shadow: 0 10px 30px rgba(0,0,0,0.5);
       z-index: 100;
     }
-    #entry input {
+
+    #entry input[type="text"],
+    #entry input[type="file"] {
       width: 100%;
       padding: 12px;
       margin: 10px 0;
@@ -73,8 +75,29 @@
       font-size: 1.1em;
       box-sizing: border-box;
       outline: none;
+      display: block;
     }
     #entry input:focus { border-color: var(--primary); }
+
+    .mode-area {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+    .mode-area label {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: bold;
+    }
+    #entry input[type="radio"] {
+      width: auto;
+      margin: 0;
+      transform: scale(1.2);
+      accent-color: var(--primary);
+    }
 
     /* === ヘッダー === */
     #headerInfo {
@@ -88,7 +111,6 @@
     }
     h1 {
       margin: 0;
-      /* 日本語タイトルなので日本語フォント優先 */
       font-family: var(--font-jp);
       font-weight: 700;
       font-size: 1.5em;
@@ -100,7 +122,6 @@
       color: var(--primary);
       font-size: 0.9em;
     }
-    /* ID部分だけデジタルフォントにする */
     #roomIdText {
       font-family: var(--font-num);
       font-weight: bold;
@@ -119,17 +140,15 @@
       margin: 0 auto;
     }
 
-    /* 1. 問題表示エリア (高さ固定) */
+    /* 1. 問題表示エリア */
     #stage {
       height: 35dvh;
       flex: none;
-
       background: rgba(0, 0, 0, 0.3);
       border: 2px solid var(--primary);
       box-shadow: var(--glow);
       border-radius: 12px;
       padding: 20px;
-
       display: flex;
       flex-direction: column;
       justify-content: space-between;
@@ -137,7 +156,7 @@
     }
 
     #counter {
-      font-family: var(--font-jp); /* 日本語フォントに変更 */
+      font-family: var(--font-jp);
       font-weight: bold;
       color: var(--primary);
       font-size: 1.2em;
@@ -378,17 +397,28 @@
 
 <div id="entry">
   <h2 style="margin-top:0; color:var(--primary);">ログイン</h2>
-  <label style="display:block; text-align:left; cursor:pointer; margin-bottom:5px;">
-    <input type="radio" name="mode" value="join" checked style="width:auto;"> ルーム参加（回答者）
-  </label>
-  <label style="display:block; text-align:left; cursor:pointer;">
-    <input type="radio" name="mode" value="create" style="width:auto;"> ルーム作成（司会者）
-  </label>
-  <br>
-  <input id="name" placeholder="名前">
-  <input id="room" placeholder="ルームID">
+
+  <div class="mode-area">
+    <label>
+      <input type="radio" name="mode" value="join" checked onchange="toggleFile(false)">
+      <span>参加者</span>
+    </label>
+    <label>
+      <input type="radio" name="mode" value="create" onchange="toggleFile(true)">
+      <span>司会者（ルーム作成）</span>
+    </label>
+  </div>
+
+  <input type="text" id="name" placeholder="名前">
+  <input type="text" id="room" placeholder="ルームID">
+
+  <div id="fileArea" style="display:none; margin-top:15px; text-align:left;">
+    <label style="font-size:0.9em; color:#888;">問題ファイル (CSV/TXT):</label><br>
+    <input type="file" id="qFile" accept=".csv,.txt" style="color:white; margin-top:5px;">
+  </div>
+
   <br><br>
-  <button onclick="enter()" style="width:100%; font-size:1.2em;">入室</button>
+  <button onclick="enter()" style="width:100%; font-size:1.2em;">開始</button>
 </div>
 
 <div id="game" style="display:none;">
@@ -436,6 +466,10 @@
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 <script src="/static/app.js" defer></script>
 <script>
+  function toggleFile(show) {
+    document.getElementById('fileArea').style.display = show ? 'block' : 'none';
+  }
+
   const obsHeader = document.getElementById('headerInfo');
   const obsGame = document.getElementById('game');
   const observer = new MutationObserver((mutations) => {
