@@ -141,7 +141,10 @@ async def cleanup_loop():
         rooms_to_delete = []
 
         for room_id, r in rooms.items():
-            if len(r["players"]) == 0:
+            # アクティブな（接続中の）ユーザー数をカウント
+            active_count = sum(1 for p in r["players"].values() if p.get("sid") is not None)
+
+            if active_count == 0:
                 if r.get("empty_at") is None:
                     r["empty_at"] = now
                 elif now - r["empty_at"] > ROOM_TIMEOUT:
@@ -159,19 +162,12 @@ async def cleanup_loop():
 # =====================================================
 @sio.event
 async def disconnect(sid):
-    target_room = None
-    target_user_id = None
-
+    # 切断時はデータを削除せず、sidをNoneにするだけに留める（リロード対策）
     for room_id, r in rooms.items():
         for uid, p in r["players"].items():
             if p["sid"] == sid:
-                target_room = room_id
-                target_user_id = uid
-                break
-        if target_room: break
-
-    if target_room and target_user_id:
-        await leave_room(sid, {"roomId": target_room})
+                p["sid"] = None  # オフラインとしてマーク
+                return  # 削除処理（leave_room）は呼び出さない
 
 
 # =====================================================
@@ -214,7 +210,7 @@ async def create_room(sid, data):
 
 
 # =====================================================
-# ルーム参加
+# ルーム参加（★修正箇所あり）
 # =====================================================
 @sio.event
 async def join_room(sid, data):
@@ -252,12 +248,21 @@ async def join_room(sid, data):
     if is_master:
         await sio.emit("sync_state", r["state"], to=sid)
 
+    # ★追加: すでに結果発表状態なら、このユーザーにだけ結果画面を送る
+    if r["state"] == "finished":
+        ranking = sorted(
+            [p for uid, p in r["players"].items() if uid != r["master_user_id"]],
+            key=lambda p: p["score"],
+            reverse=True
+        )
+        await sio.emit("final", ranking, to=sid)
+
+    # 通常のクイズ画面復元
     q = r.get("quiz")
     if q:
-        display_text = q["text"][:q["index"]] if q["active"] else q["text"]
-
-        # 状態によっては全文表示
-        if r["state"] in ["show_answer", "all_done"]:
+        if r["state"] in ["asking", "buzzed", "wrong", "timeout"]:
+            display_text = q["text"][:q["index"]]
+        else:
             display_text = q["text"]
 
         answer_text = ""
@@ -275,7 +280,7 @@ async def join_room(sid, data):
 
 
 # =====================================================
-# 退室（★修正箇所）
+# 退室
 # =====================================================
 @sio.event
 async def leave_room(sid, data):
@@ -286,26 +291,28 @@ async def leave_room(sid, data):
     user_id = next((uid for uid, p in r["players"].items() if p["sid"] == sid), None)
     if not user_id: return
 
-    # 司会者が落ちた場合
+    # 司会者は削除しない
     if user_id == r["master_user_id"]:
         return
 
-    # 回答権を持っている人が落ちた場合
+    # 回答中の人が明示的に「退室」を押した場合はリセットする
     q = r.get("quiz")
     if q and q.get("buzzed_sid") == user_id:
-        # ★ここが修正ポイント:
-        # プレイヤーデータを削除せず、回答権もリセットせずに
-        # 単にSocketの切断処理だけ行って終了します。
-        # これにより、ユーザーデータはサーバーに残り、リロード復帰が可能になります。
-        await sio.leave_room(sid, room)
-        return
+        q["buzzed_sid"] = None
+        q["active"] = True
+        r["state"] = "asking"
+        await sio.emit("clear_buzzed", room=room)
+        await sio.emit("enable_buzz", True, room=room)
+        if r["master_user_id"] in r["players"]:
+            master_sid = r["players"][r["master_user_id"]]["sid"]
+            await sio.emit("sync_state", "asking", to=master_sid)
 
-    # 通常の退室処理
     del r["players"][user_id]
     await sio.leave_room(sid, room)
     await emit_players(room)
 
-    if len(r["players"]) == 0:
+    active_count = sum(1 for p in r["players"].values() if p.get("sid") is not None)
+    if active_count == 0:
         r["empty_at"] = time.time()
 
 
