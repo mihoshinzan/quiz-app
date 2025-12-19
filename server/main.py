@@ -98,10 +98,26 @@ def parse_questions(file_content):
         # 文字列をファイルオブジェクトのように扱う
         # strip()で前後の余計な空白や改行を除去
         f = io.StringIO(text.strip())
-        return list(csv.DictReader(f))
+        reader = csv.DictReader(f)
+
+        if not reader.fieldnames:
+            return [], "CSVエラー：ヘッダー（1行目）が見つかりません。"
+
+        normalized_headers = [h.strip().replace('\ufeff', '') for h in reader.fieldnames]
+        reader.fieldnames = normalized_headers
+
+        if "question" not in normalized_headers or "answer" not in normalized_headers:
+            return [], f"フォーマットエラー：必須列(question, answer)がありません。現在の列: {normalized_headers}"
+
+        questions = list(reader)
+        if not questions:
+            return [], "データエラー：問題データが0件です。"
+
+        return questions, None
+
     except Exception as e:
         print(f"Parse Error: {e}")
-        return []
+        return [], f"解析エラー：{str(e)}"
 
 
 def emit_players(room):
@@ -172,10 +188,9 @@ async def create_room(sid, data):
         await sio.emit("error_msg", "そのルームIDは既に使われています", to=sid)
         return
 
-    questions = parse_questions(file_content)
-    if not questions:
-        await sio.emit("error_msg", "問題ファイルの読み込みに失敗しました。CSVの形式や文字コードを確認してください。",
-                       to=sid)
+    questions, error_msg = parse_questions(file_content)
+    if error_msg:
+        await sio.emit("error_msg", error_msg, to=sid)
         return
 
     rooms[room] = {
@@ -236,10 +251,17 @@ async def join_room(sid, data):
 
     if is_master:
         await sio.emit("sync_state", r["state"], to=sid)
+        # ★削除: 停止していた文字送りを再開させる処理は不要のため削除
 
     q = r.get("quiz")
     if q:
-        display_text = q["text"][:q["index"]] if q["active"] else q["text"]
+        # 現在の状態に合わせて、表示すべき文字数（途中or全文）を決定
+        if r["state"] in ["asking", "buzzed", "wrong", "timeout"]:
+            # 文字送りループは裏で動いているので、現在の index までを表示
+            display_text = q["text"][:q["index"]]
+        else:
+            display_text = q["text"]
+
         answer_text = ""
         if r["state"] in ["show_answer", "all_done"]:
             answer_text = f"正解：{q['answer']}"
@@ -265,6 +287,11 @@ async def leave_room(sid, data):
 
     user_id = next((uid for uid, p in r["players"].items() if p["sid"] == sid), None)
     if not user_id: return
+
+    # 司会者が落ちた場合
+    if user_id == r["master_user_id"]:
+        # ★削除: 文字送りを停止する処理を削除
+        return
 
     q = r.get("quiz")
     if q and q.get("buzzed_sid") == user_id:
