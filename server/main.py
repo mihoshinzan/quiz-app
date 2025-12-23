@@ -162,12 +162,19 @@ async def cleanup_loop():
 # =====================================================
 @sio.event
 async def disconnect(sid):
-    # 切断時はデータを削除せず、sidをNoneにするだけに留める（リロード対策）
+    target_room = None
+    target_user_id = None
+
     for room_id, r in rooms.items():
         for uid, p in r["players"].items():
             if p["sid"] == sid:
-                p["sid"] = None  # オフラインとしてマーク
-                return  # 削除処理（leave_room）は呼び出さない
+                target_room = room_id
+                target_user_id = uid
+                break
+        if target_room: break
+
+    if target_room and target_user_id:
+        await leave_room(sid, {"roomId": target_room})
 
 
 # =====================================================
@@ -225,14 +232,42 @@ async def join_room(sid, data):
 
     r["empty_at"] = None
 
+    # --- ユーザー登録ロジックの修正 ---
     if user_id in r["players"]:
+        # 1. 既存のIDで戻ってきた場合（通常のリロード）
         r["players"][user_id]["sid"] = sid
         r["players"][user_id]["name"] = name
     else:
-        if name in [p["name"] for p in r["players"].values()]:
-            await sio.emit("error_msg", "その名前は既に使われています", to=sid)
-            return
-        r["players"][user_id] = {"name": name, "score": 0, "sid": sid}
+        # 2. 新しいIDだが、名前が重複しているかチェック
+        # 名前から既存のユーザーIDを探す
+        existing_uid = next((uid for uid, p in r["players"].items() if p["name"] == name), None)
+
+        if existing_uid:
+            # 名前が重複している場合
+            if r["players"][existing_uid]["sid"] is None:
+                # ★修正: 旧ユーザーがオフラインなら「成り代わり（データ引き継ぎ）」を行う
+
+                # データを新しいIDに移す
+                r["players"][user_id] = r["players"][existing_uid]
+                r["players"][user_id]["sid"] = sid
+
+                # 旧IDデータを削除
+                del r["players"][existing_uid]
+
+                # 特殊権限（司会者・早押し権）のIDも更新する
+                if r["master_user_id"] == existing_uid:
+                    r["master_user_id"] = user_id
+
+                if r.get("quiz") and r["quiz"].get("buzzed_sid") == existing_uid:
+                    r["quiz"]["buzzed_sid"] = user_id
+
+            else:
+                # オンライン（別人が使用中）ならエラー
+                await sio.emit("error_msg", "その名前は既に使われています", to=sid)
+                return
+        else:
+            # 3. 完全新規
+            r["players"][user_id] = {"name": name, "score": 0, "sid": sid}
 
     await sio.enter_room(sid, room)
     await sio.emit("joined", to=sid)
@@ -248,7 +283,6 @@ async def join_room(sid, data):
     if is_master:
         await sio.emit("sync_state", r["state"], to=sid)
 
-    # ★追加: すでに結果発表状態なら、このユーザーにだけ結果画面を送る
     if r["state"] == "finished":
         ranking = sorted(
             [p for uid, p in r["players"].items() if uid != r["master_user_id"]],
@@ -257,7 +291,6 @@ async def join_room(sid, data):
         )
         await sio.emit("final", ranking, to=sid)
 
-    # 通常のクイズ画面復元
     q = r.get("quiz")
     if q:
         if r["state"] in ["asking", "buzzed", "wrong", "timeout"]:
