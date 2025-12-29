@@ -5,7 +5,11 @@ const socket = io();
 ===================================================== */
 let userId = localStorage.getItem("quiz_user_id");
 if (!userId) {
-  userId = crypto.randomUUID();
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    userId = crypto.randomUUID();
+  } else {
+    userId = 'user_' + Date.now().toString(36) + Math.random().toString(36).substring(2);
+  }
   localStorage.setItem("quiz_user_id", userId);
 }
 
@@ -117,7 +121,6 @@ function enter() {
 
     const reader = new FileReader();
     reader.onload = function(e) {
-      // バイナリとして送信 (文字化け回避のため)
       const fileContent = e.target.result;
       socket.emit("create_room", {
         roomId: room,
@@ -314,10 +317,13 @@ socket.on("final", result => {
 });
 
 socket.on("sync_state", state => { if (isMaster) setState(state); });
+
+// ★修正: 空文字でもundefinedでなければ更新するように変更
 socket.on("sync_display", data => {
-  if (data.question) questionArea.textContent = data.question;
-  if (data.answer) answerArea.textContent = data.answer;
+  if (data.question !== undefined) questionArea.textContent = data.question;
+  if (data.answer !== undefined) answerArea.textContent = data.answer;
 });
+
 socket.on("error_msg", msg => { alert(msg); resetToEntry(); });
 socket.on("room_closed", () => {
   const message = isMaster ? "ルームを解散しました" : "司会者がルームを解散しました";
@@ -326,13 +332,11 @@ socket.on("room_closed", () => {
 });
 
 /* =====================================================
-   ★追加: スマホのバックグラウンド復帰対策
+   スマホのバックグラウンド復帰対策
 ===================================================== */
 document.addEventListener("visibilitychange", () => {
-  // 画面が「表示」状態になり、かつルームに入室済みであれば
   if (document.visibilityState === "visible" && currentRoom) {
     console.log("App active: Requesting sync...");
-    // サーバーに最新状態を要求
     socket.emit("request_sync", { roomId: currentRoom });
   }
 });
