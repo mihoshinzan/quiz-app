@@ -142,6 +142,7 @@ async def cleanup_loop():
 
         for room_id, r in rooms.items():
             # アクティブな（接続中の）ユーザー数をカウント
+            # sid が None でないユーザーを探す
             active_count = sum(1 for p in r["players"].values() if p.get("sid") is not None)
 
             if active_count == 0:
@@ -162,19 +163,13 @@ async def cleanup_loop():
 # =====================================================
 @sio.event
 async def disconnect(sid):
-    target_room = None
-    target_user_id = None
-
+    # リロード等で切断された場合、データを削除せず「オフライン」としてマークするだけにする
     for room_id, r in rooms.items():
         for uid, p in r["players"].items():
             if p["sid"] == sid:
-                target_room = room_id
-                target_user_id = uid
-                break
-        if target_room: break
-
-    if target_room and target_user_id:
-        await leave_room(sid, {"roomId": target_room})
+                p["sid"] = None  # オフライン状態にする
+                # leave_room（データ削除）は呼び出さない！
+                return
 
 
 # =====================================================
@@ -217,7 +212,7 @@ async def create_room(sid, data):
 
 
 # =====================================================
-# ルーム参加（★修正箇所あり）
+# ルーム参加
 # =====================================================
 @sio.event
 async def join_room(sid, data):
@@ -232,37 +227,28 @@ async def join_room(sid, data):
 
     r["empty_at"] = None
 
-    # --- ユーザー登録ロジックの修正 ---
+    # --- ユーザー登録ロジック ---
     if user_id in r["players"]:
-        # 1. 既存のIDで戻ってきた場合（通常のリロード）
+        # 1. 既存のIDで戻ってきた場合
         r["players"][user_id]["sid"] = sid
         r["players"][user_id]["name"] = name
     else:
         # 2. 新しいIDだが、名前が重複しているかチェック
-        # 名前から既存のユーザーIDを探す
         existing_uid = next((uid for uid, p in r["players"].items() if p["name"] == name), None)
 
         if existing_uid:
-            # 名前が重複している場合
             if r["players"][existing_uid]["sid"] is None:
-                # ★修正: 旧ユーザーがオフラインなら「成り代わり（データ引き継ぎ）」を行う
-
-                # データを新しいIDに移す
+                # データ引き継ぎ（成り代わり）
                 r["players"][user_id] = r["players"][existing_uid]
                 r["players"][user_id]["sid"] = sid
-
-                # 旧IDデータを削除
                 del r["players"][existing_uid]
 
-                # 特殊権限（司会者・早押し権）のIDも更新する
+                # 特殊権限IDの更新
                 if r["master_user_id"] == existing_uid:
                     r["master_user_id"] = user_id
-
                 if r.get("quiz") and r["quiz"].get("buzzed_sid") == existing_uid:
                     r["quiz"]["buzzed_sid"] = user_id
-
             else:
-                # オンライン（別人が使用中）ならエラー
                 await sio.emit("error_msg", "その名前は既に使われています", to=sid)
                 return
         else:
@@ -291,8 +277,10 @@ async def join_room(sid, data):
         )
         await sio.emit("final", ranking, to=sid)
 
+    # 画面状態の復元
     q = r.get("quiz")
     if q:
+        # 途中経過か全文かを判断
         if r["state"] in ["asking", "buzzed", "wrong", "timeout"]:
             display_text = q["text"][:q["index"]]
         else:
@@ -313,7 +301,7 @@ async def join_room(sid, data):
 
 
 # =====================================================
-# 退室
+# 退室（明示的な退室ボタンでの操作）
 # =====================================================
 @sio.event
 async def leave_room(sid, data):
@@ -328,7 +316,7 @@ async def leave_room(sid, data):
     if user_id == r["master_user_id"]:
         return
 
-    # 回答中の人が明示的に「退室」を押した場合はリセットする
+    # 回答中の人が退室ボタンを押した場合は状態リセット
     q = r.get("quiz")
     if q and q.get("buzzed_sid") == user_id:
         q["buzzed_sid"] = None
@@ -495,3 +483,41 @@ async def close_room(sid, data):
         for p in r["players"].values():
             await sio.emit("room_closed", to=p["sid"])
         del rooms[room]
+
+
+# =====================================================
+# ★追加: 再同期リクエスト（スマホのバックグラウンド復帰対策）
+# =====================================================
+@sio.event
+async def request_sync(sid, data):
+    room = data.get("roomId")
+    r = rooms.get(room)
+    if not r: return
+
+    # 司会者には状態コードも送る
+    if sid == r["players"].get(r["master_user_id"], {}).get("sid"):
+        await sio.emit("sync_state", r["state"], to=sid)
+
+    q = r.get("quiz")
+    if q:
+        # 現在の状態に合わせて表示テキストを生成
+        if r["state"] in ["asking", "buzzed", "wrong", "timeout"]:
+            # 出題中などは、現在進んでいる文字数までを表示
+            display_text = q["text"][:q["index"]]
+        else:
+            # 正解表示後などは全文表示
+            display_text = q["text"]
+
+        answer_text = ""
+        if r["state"] in ["show_answer", "all_done"]:
+            answer_text = f"正解：{q['answer']}"
+
+        display_data = {"question": display_text, "answer": answer_text}
+        await sio.emit("sync_display", display_data, to=sid)
+
+        # 早押しボタンの状態も復元
+        if q["buzzed_sid"]:
+            buzzed_name = r["players"][q["buzzed_sid"]]["name"]
+            await sio.emit("buzzed", {"name": buzzed_name}, to=sid)
+        elif r["state"] == "asking":
+            await sio.emit("enable_buzz", True, to=sid)

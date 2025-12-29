@@ -117,7 +117,7 @@ function enter() {
 
     const reader = new FileReader();
     reader.onload = function(e) {
-      // ★バイナリとして送信 (文字化け回避のため)
+      // バイナリとして送信 (文字化け回避のため)
       const fileContent = e.target.result;
       socket.emit("create_room", {
         roomId: room,
@@ -126,7 +126,7 @@ function enter() {
         fileContent: fileContent
       });
     };
-    reader.readAsArrayBuffer(file); // ★ArrayBufferとして読む
+    reader.readAsArrayBuffer(file);
 
   } else {
     // 参加者モード
@@ -323,4 +323,16 @@ socket.on("room_closed", () => {
   const message = isMaster ? "ルームを解散しました" : "司会者がルームを解散しました";
   alert(message);
   resetToEntry();
+});
+
+/* =====================================================
+   ★追加: スマホのバックグラウンド復帰対策
+===================================================== */
+document.addEventListener("visibilitychange", () => {
+  // 画面が「表示」状態になり、かつルームに入室済みであれば
+  if (document.visibilityState === "visible" && currentRoom) {
+    console.log("App active: Requesting sync...");
+    // サーバーに最新状態を要求
+    socket.emit("request_sync", { roomId: currentRoom });
+  }
 });
