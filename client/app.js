@@ -332,7 +332,25 @@ socket.on("room_closed", () => {
 });
 
 /* =====================================================
+   ★追加: 再接続時の自動復帰 (スマホのバックグラウンド切断対策)
+   通信が切れて再接続した瞬間に、ルームに入り直します。
+===================================================== */
+socket.on("connect", () => {
+  console.log("Connected/Reconnected");
+  // もし既に入室済み（変数に値がある）なら、自動で入り直す
+  if (currentRoom && myName && userId) {
+    console.log("Auto-rejoining room...");
+    socket.emit("join_room", {
+      roomId: currentRoom,
+      name: myName,
+      userId: userId
+    });
+  }
+});
+
+/* =====================================================
    スマホのバックグラウンド復帰対策
+   通信が切れていなくても、画面が表示されたら最新情報を取得します。
 ===================================================== */
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && currentRoom) {
