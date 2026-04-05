@@ -355,7 +355,8 @@ async def next_question(sid, data):
         "answer": qdata["answer"],
         "index": 0,
         "active": True,
-        "buzzed_sid": None
+        "buzzed_sid": None,
+        "loop_running": False
     }
     r["state"] = "asking"
 
@@ -365,16 +366,27 @@ async def next_question(sid, data):
 
 
 async def char_loop(room):
-    while True:
-        r = rooms.get(room)
-        if not r: break
-        q = r["quiz"]
-        if not q or not q["active"]: break
-        if q["index"] >= len(q["text"]): break
+    r = rooms.get(room)
+    if not r or not r.get("quiz"): return
+    q = r["quiz"]
+    if q.get("loop_running"): return
+    
+    q["loop_running"] = True
+    try:
+        while True:
+            r = rooms.get(room)
+            if not r: break
+            q = r["quiz"]
+            if not q or not q["active"]: break
+            if q["index"] >= len(q["text"]): break
 
-        await sio.emit("char", q["text"][q["index"]], room=room)
-        q["index"] += 1
-        await asyncio.sleep(1.0)
+            await sio.emit("char", q["text"][q["index"]], room=room)
+            q["index"] += 1
+            await asyncio.sleep(1.0)
+    finally:
+        r = rooms.get(room)
+        if r and r.get("quiz"):
+            r["quiz"]["loop_running"] = False
 
 
 @sio.event
@@ -398,6 +410,7 @@ async def buzz(sid, data):
 async def wrong(sid, data):
     room = data["roomId"]
     r = rooms.get(room)
+    if not r or sid != r["players"][r["master_user_id"]]["sid"]: return
     if r and r["quiz"]:
         r["quiz"]["buzzed_sid"] = None
         r["state"] = "wrong"
@@ -408,17 +421,20 @@ async def wrong(sid, data):
 async def resume(sid, data):
     room = data["roomId"]
     r = rooms.get(room)
+    if not r or sid != r["players"][r["master_user_id"]]["sid"]: return
     if r and r["quiz"]:
         r["quiz"]["active"] = True
         r["state"] = "asking"
         await sio.emit("enable_buzz", True, room=room)
-        sio.start_background_task(char_loop, room)
+        if not r["quiz"].get("loop_running"):
+            sio.start_background_task(char_loop, room)
 
 
 @sio.event
 async def timeout(sid, data):
     room = data["roomId"]
     r = rooms.get(room)
+    if not r or sid != r["players"][r["master_user_id"]]["sid"]: return
     if r and r["quiz"]:
         r["quiz"]["active"] = False
         r["quiz"]["buzzed_sid"] = None
@@ -431,7 +447,8 @@ async def timeout(sid, data):
 async def judge(sid, data):
     room = data["roomId"]
     r = rooms.get(room)
-    if not r or not r["quiz"]: return
+    if not r or sid != r["players"][r["master_user_id"]]["sid"]: return
+    if not r["quiz"]: return
     q = r["quiz"]
     if q["buzzed_sid"]:
         r["players"][q["buzzed_sid"]]["score"] += 10
@@ -465,6 +482,7 @@ async def clear_display(sid, data):
 async def end_game(sid, data):
     room = data["roomId"]
     r = rooms.get(room)
+    if not r or sid != r["players"][r["master_user_id"]]["sid"]: return
     if r:
         ranking = sorted(
             [p for uid, p in r["players"].items() if uid != r["master_user_id"]],
@@ -481,7 +499,8 @@ async def close_room(sid, data):
     r = rooms.get(room)
     if r and sid == r["players"][r["master_user_id"]]["sid"]:
         for p in r["players"].values():
-            await sio.emit("room_closed", to=p["sid"])
+            if p["sid"] is not None:
+                await sio.emit("room_closed", to=p["sid"])
         del rooms[room]
 
 
