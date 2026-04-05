@@ -498,6 +498,26 @@ async def request_sync(sid, data):
     if sid == r["players"].get(r["master_user_id"], {}).get("sid"):
         await sio.emit("sync_state", r["state"], to=sid)
 
+    # 参加者情報（スコア等）を同期
+    players_only = {
+        uid: p for uid, p in r["players"].items()
+        if uid != r["master_user_id"]
+    }
+    await sio.emit("players", players_only, to=sid)
+
+    # 現在の出題番号を同期
+    if r["current"] >= 0:
+        await sio.emit("counter", {"cur": r["current"] + 1}, to=sid)
+
+    # リザルト（終了）状態を復元
+    if r["state"] == "finished":
+        ranking = sorted(
+            [p for uid, p in r["players"].items() if uid != r["master_user_id"]],
+            key=lambda p: p["score"],
+            reverse=True
+        )
+        await sio.emit("final", ranking, to=sid)
+
     q = r.get("quiz")
     if q:
         # 現在の状態に合わせて表示テキストを生成
@@ -519,5 +539,12 @@ async def request_sync(sid, data):
         if q["buzzed_sid"]:
             buzzed_name = r["players"][q["buzzed_sid"]]["name"]
             await sio.emit("buzzed", {"name": buzzed_name}, to=sid)
+            await sio.emit("enable_buzz", False, to=sid)
         elif r["state"] == "asking":
             await sio.emit("enable_buzz", True, to=sid)
+        else:
+            await sio.emit("enable_buzz", False, to=sid)
+    else:
+        # 問題がない状態 (initなど) であればクリアを通知
+        await sio.emit("clear_display", to=sid)
+        await sio.emit("enable_buzz", False, to=sid)

@@ -352,9 +352,16 @@ socket.on("connect", () => {
    スマホのバックグラウンド復帰対策
    通信が切れていなくても、画面が表示されたら最新情報を取得します。
 ===================================================== */
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && currentRoom) {
+function handleSync() {
+  if (currentRoom) {
     console.log("App active: Requesting sync...");
     socket.emit("request_sync", { roomId: currentRoom });
   }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") handleSync();
+});
+window.addEventListener("focus", handleSync);
+window.addEventListener("pageshow", (e) => {
+  if (e.persisted) handleSync();
 });
